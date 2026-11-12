@@ -1,5 +1,5 @@
 [Unit]
-Description=ha-pv-ensemble nightly calibration
+Description=roofcast nightly calibration
 
 [Timer]
 OnCalendar=*-*-* 01:30:00 UTC

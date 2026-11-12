@@ -1,6 +1,6 @@
 import numpy as np
 
-from pvensemble import knmi
+from roofcast import knmi
 
 
 def test_rule_needs_a_big_miss_and_agreement():

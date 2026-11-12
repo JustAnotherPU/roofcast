@@ -11,7 +11,7 @@ horizon.json.bak-*
 config.yaml
 .env
 *.env
-!deploy/systemd/pvensemble.env.example
+!deploy/systemd/roofcast.env.example
 # python
 .venv/
 venv/

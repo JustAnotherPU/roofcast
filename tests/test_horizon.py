@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from pvensemble.engine import Engine, hmask
+from roofcast.engine import Engine, hmask
 
 from conftest import FakeHA, clear_sky_weather
 
@@ -29,7 +29,7 @@ def test_mask_cuts_direct_only(cfg):
 
 
 def test_mask_ignored_for_multi_face_arrays(cfg):
-    from pvensemble.config import Face
+    from roofcast.config import Face
     cfg.arrays[1].faces.append(Face(90, 30, 2.0))
     eng = Engine(cfg, ha=FakeHA())
     w = clear_sky_weather(cfg, '2026-06-21', 24)
@@ -40,7 +40,7 @@ def test_horizon_learns_a_synthetic_obstacle(cfg, monkeypatch, capsys):
     """Clear-sky history where the west array loses 80 % of its beam below 20 deg, azimuth 250-290: a mask appears there."""
     import json
 
-    from pvensemble import horizon
+    from roofcast import horizon
 
     eng = Engine(cfg, ha=FakeHA())
     now = pd.Timestamp('2026-06-30T12:00Z')

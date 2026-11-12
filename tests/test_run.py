@@ -4,8 +4,8 @@ import sqlite3
 import pandas as pd
 import pytest
 
-from pvensemble import engine as E
-from pvensemble.engine import Engine
+from roofcast import engine as E
+from roofcast.engine import Engine
 
 from conftest import FakeHA, clear_sky_weather
 

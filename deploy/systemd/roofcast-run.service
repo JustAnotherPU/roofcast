@@ -1,0 +1,18 @@
+[Unit]
+Description=roofcast forecast run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=roofcast
+Group=roofcast
+EnvironmentFile=/etc/roofcast/roofcast.env
+StateDirectory=roofcast
+WorkingDirectory=/var/lib/roofcast
+ExecStart=/opt/roofcast/venv/bin/roofcast -c /etc/roofcast/config.yaml run
+TimeoutStartSec=900
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

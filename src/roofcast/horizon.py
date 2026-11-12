@@ -5,7 +5,7 @@ agreed it was clear (GHI >= 90 % of clear sky). For each clear hour: share of th
 f = (actual / k - diffuse) / beam, with k the array's unshaded level (85th percentile, sun above 25 deg).
 Per 5 deg azimuth bin (pooled +-5 deg): the height h <= 35 deg and the f below it (median) that best explain the points.
 A bin is kept with >= 6 points over >= 3 days, f <= 0.8 and an error reduction of >= 30 %. Isolated bins are dropped,
-empty bins mean no mask. Not scheduled: run it by hand (monthly in winter is enough), then `pvensemble learn`.
+empty bins mean no mask. Not scheduled: run it by hand (monthly in winter is enough), then `roofcast learn`.
 """
 from __future__ import annotations
 
@@ -106,5 +106,5 @@ def main(eng: Engine, write: bool = False) -> int:
         shutil.copy(eng.hz_path, f'{eng.hz_path}.bak-{int(time.time())}')
     with open(eng.hz_path, 'w') as fh:
         json.dump(hz, fh, indent=1)
-    log('horizon.json written, run `pvensemble learn` next')
+    log('horizon.json written, run `roofcast learn` next')
     return 0

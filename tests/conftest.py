@@ -5,7 +5,7 @@ import pandas as pd
 import pvlib
 import pytest
 
-from pvensemble.config import load
+from roofcast.config import load
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

@@ -1,4 +1,4 @@
-"""Command line: pvensemble {run,learn,horizon,test,knmi}."""
+"""Command line: roofcast {run,learn,horizon,test,knmi}."""
 from __future__ import annotations
 
 import argparse
@@ -33,8 +33,8 @@ def selftest() -> int:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog='pvensemble', description=__doc__)
-    p.add_argument('-c', '--config', default=os.environ.get('PVENSEMBLE_CONFIG', 'config.yaml'))
+    p = argparse.ArgumentParser(prog='roofcast', description=__doc__)
+    p.add_argument('-c', '--config', default=os.environ.get('ROOFCAST_CONFIG', 'config.yaml'))
     sub = p.add_subparsers(dest='cmd', required=True)
     sub.add_parser('run', help='fetch forecasts, publish to Home Assistant (every 15 min)')
     sub.add_parser('learn', help='recalibrate on the measured history (nightly)')

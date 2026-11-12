@@ -132,7 +132,7 @@ class Engine:
         self.cfg = cfg
         self.tz = cfg.timezone
         self.loc = pvlib.location.Location(cfg.latitude, cfg.longitude, 'UTC', cfg.altitude)
-        self.db_path = cfg.path('pvensemble.db')
+        self.db_path = cfg.path('roofcast.db')
         self.cal_path = cfg.path('calibration.json')
         self.hz_path = cfg.path('horizon.json')
         self.cache = cfg.path('cache')

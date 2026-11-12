@@ -1,5 +1,5 @@
 [Unit]
-Description=ha-pv-ensemble forecast every 15 minutes
+Description=roofcast forecast every 15 minutes
 
 [Timer]
 # offset of 7 min kept from the original schedule

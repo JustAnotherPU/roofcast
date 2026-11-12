@@ -1,7 +1,7 @@
 import numpy as np
 
-from pvensemble.cli import selftest
-from pvensemble.engine import LEVEL_BOUNDS, level_factor
+from roofcast.cli import selftest
+from roofcast.engine import LEVEL_BOUNDS, level_factor
 
 
 def test_bounds_and_fallback():

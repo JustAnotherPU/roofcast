@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from pvensemble.engine import detailed_forecast, local_days
+from roofcast.engine import detailed_forecast, local_days
 
 TZ = 'Europe/Amsterdam'
 

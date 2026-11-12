@@ -1,10 +1,10 @@
-# Example Home Assistant package for ha-pv-ensemble.
+# Example Home Assistant package for roofcast.
 # Put it in config/packages/ (with `homeassistant: packages: !include_dir_named packages`) and adapt the names.
 # Entity ids below match the defaults of config.example.yaml.
 
 input_boolean:
   pv_forecast_use_ensemble:
-    name: Use ha-pv-ensemble forecast for EMHASS
+    name: Use roofcast forecast for EMHASS
     icon: mdi:solar-power-variant
 
 template:

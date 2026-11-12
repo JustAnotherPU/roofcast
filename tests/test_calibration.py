@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pvensemble.config import Array, Face
-from pvensemble.engine import Engine, binkey, quantiles_from_ratios
+from roofcast.config import Array, Face
+from roofcast.engine import Engine, binkey, quantiles_from_ratios
 
 from conftest import FakeHA, clear_sky_weather
 

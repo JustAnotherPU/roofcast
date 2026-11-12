@@ -70,7 +70,7 @@ new_array:
   min_hours: 6
   level_only_hours: 150     # a new array gets a level only (no shape) until it has this many hours
 
-horizon_mask: true          # use data_dir/horizon.json if present (see `pvensemble horizon`)
+horizon_mask: true          # use data_dir/horizon.json if present (see `roofcast horizon`)
 
 knmi:
   enabled: false            # Benelux only. Needs the [knmi] extra and a KNMI Data Platform key.

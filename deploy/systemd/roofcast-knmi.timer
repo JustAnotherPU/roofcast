@@ -1,5 +1,5 @@
 [Unit]
-Description=ha-pv-ensemble KNMI nowcast every 15 minutes (files appear about 25 min after issue)
+Description=roofcast KNMI nowcast every 15 minutes (files appear about 25 min after issue)
 
 [Timer]
 OnCalendar=*-*-* *:12,27,42,57:00

@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from pvensemble.config import ConfigError, parse
+from roofcast.config import ConfigError, parse
 
 from conftest import ROOT
 

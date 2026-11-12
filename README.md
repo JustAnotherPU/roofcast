@@ -1,4 +1,4 @@
-# ha-pv-ensemble
+# RoofCast
 
 A solar PV forecast for Home Assistant that learns from your own inverter data. It pulls several weather models from Open-Meteo, turns each one into a PV estimate per array with pvlib, corrects each estimate with what your panels actually produced, and publishes the ensemble to Home Assistant in the same format as the Solcast integration, so EMHASS and existing cards can read it without changes.
 
@@ -28,47 +28,47 @@ On the author's roof, over the last 30 days, the day-ahead error (WMAPE of daily
 Python 3.11 or newer. There is no PyPI package: install from a clone of this repository.
 
 ```sh
-sudo useradd --system --home /var/lib/pvensemble pvensemble
-git clone <this repository> ha-pv-ensemble && cd ha-pv-ensemble
-sudo python3 -m venv /opt/pvensemble/venv
-sudo /opt/pvensemble/venv/bin/pip install .                                # or '.[knmi]' for the nowcast
-sudo mkdir -p /etc/pvensemble
-sudo cp config.example.yaml /etc/pvensemble/config.yaml                    # then edit it
-sudo cp deploy/systemd/pvensemble.env.example /etc/pvensemble/pvensemble.env
-sudo chmod 600 /etc/pvensemble/pvensemble.env                              # put the HA token in it
+sudo useradd --system --home /var/lib/roofcast roofcast
+git clone <this repository> roofcast && cd roofcast
+sudo python3 -m venv /opt/roofcast/venv
+sudo /opt/roofcast/venv/bin/pip install .                                # or '.[knmi]' for the nowcast
+sudo mkdir -p /etc/roofcast
+sudo cp config.example.yaml /etc/roofcast/config.yaml                    # then edit it
+sudo cp deploy/systemd/roofcast.env.example /etc/roofcast/roofcast.env
+sudo chmod 600 /etc/roofcast/roofcast.env                              # put the HA token in it
 sudo cp deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now pvensemble-run.timer pvensemble-learn.timer
+sudo systemctl enable --now roofcast-run.timer roofcast-learn.timer
 ```
 
-With the systemd units, set `data_dir: /var/lib/pvensemble` in the config.
+With the systemd units, set `data_dir: /var/lib/roofcast` in the config.
 
 Check the config, then do a first calibration and a first run by hand:
 
 ```sh
-/opt/pvensemble/venv/bin/pvensemble -c /etc/pvensemble/config.yaml check
-sudo systemctl start pvensemble-learn.service
-sudo systemctl start pvensemble-run.service
-journalctl -u pvensemble-learn -u pvensemble-run -n 50
+/opt/roofcast/venv/bin/roofcast -c /etc/roofcast/config.yaml check
+sudo systemctl start roofcast-learn.service
+sudo systemctl start roofcast-run.service
+journalctl -u roofcast-learn -u roofcast-run -n 50
 ```
 
 Commands:
 
 | command | what it does | when |
 |---|---|---|
-| `pvensemble run` | fetch forecasts, publish to HA | every 15 min (timer) |
-| `pvensemble learn` | recalibrate on the history | nightly (timer) |
-| `pvensemble horizon [--write]` | learn the horizon mask from clear days | by hand, monthly in winter, then `learn` |
-| `pvensemble test` | offline self-test of the level factor | any time |
-| `pvensemble check` | validate the config | after editing it |
-| `pvensemble knmi [--score]` | KNMI nowcast, or its shadow score | every 15 min (optional timer) |
+| `roofcast run` | fetch forecasts, publish to HA | every 15 min (timer) |
+| `roofcast learn` | recalibrate on the history | nightly (timer) |
+| `roofcast horizon [--write]` | learn the horizon mask from clear days | by hand, monthly in winter, then `learn` |
+| `roofcast test` | offline self-test of the level factor | any time |
+| `roofcast check` | validate the config | after editing it |
+| `roofcast knmi [--score]` | KNMI nowcast, or its shadow score | every 15 min (optional timer) |
 
 Run the manual commands (`horizon`, `knmi --score`) as the service user, with the env file loaded, so the files in the data dir keep the right owner and the token is available. The env file is readable by root only, so let systemd load it:
 
 ```sh
-sudo systemd-run --pipe --wait --quiet --uid=pvensemble --gid=pvensemble \
-  -p EnvironmentFile=/etc/pvensemble/pvensemble.env -p WorkingDirectory=/var/lib/pvensemble \
-  /opt/pvensemble/venv/bin/pvensemble -c /etc/pvensemble/config.yaml horizon
+sudo systemd-run --pipe --wait --quiet --uid=roofcast --gid=roofcast \
+  -p EnvironmentFile=/etc/roofcast/roofcast.env -p WorkingDirectory=/var/lib/roofcast \
+  /opt/roofcast/venv/bin/roofcast -c /etc/roofcast/config.yaml horizon
 ```
 
 ## Configuration
@@ -112,17 +112,17 @@ Every night `learn` compares each day's actual production with the last forecast
 
 ## Database size
 
-Everything goes into `data_dir/pvensemble.db`. With 8 models and a run every 15 minutes, the per-model archive (table `nwp`) grows by about 10 MB a day. `learn` deletes rows older than 35 days except the short-lead ones (up to 1 h ahead), which the outage filter needs for the whole history. Expect roughly 350 MB for the rolling window plus under 1 MB a day for what is kept, including table `out`. These figures are estimates. SQLite does not shrink the file by itself; run `sqlite3 pvensemble.db VACUUM` now and then if disk space matters.
+Everything goes into `data_dir/roofcast.db`. With 8 models and a run every 15 minutes, the per-model archive (table `nwp`) grows by about 10 MB a day. `learn` deletes rows older than 35 days except the short-lead ones (up to 1 h ahead), which the outage filter needs for the whole history. Expect roughly 350 MB for the rolling window plus under 1 MB a day for what is kept, including table `out`. These figures are estimates. SQLite does not shrink the file by itself; run `sqlite3 roofcast.db VACUUM` now and then if disk space matters.
 
 ## KNMI nowcast (optional)
 
 The Dutch weather service publishes a satellite-based solar irradiance nowcast for the next few hours. Its grid is only useful for roughly the Benelux area. To use it:
 
-1. From the repository: `/opt/pvensemble/venv/bin/pip install '.[knmi]'` (needs eccodes).
+1. From the repository: `/opt/roofcast/venv/bin/pip install '.[knmi]'` (needs eccodes).
 2. Get a free API key from the KNMI Data Platform and put `KNMI_API_KEY=...` in the env file.
-3. Set `knmi.enabled: true` and enable `pvensemble-knmi.timer`.
+3. Set `knmi.enabled: true` and enable `roofcast-knmi.timer`.
 
-The nowcast is only used when the last measured hour was more than 20 % off the forecast and KNMI corrects in the same direction. That rule came out best in the author's backtest. It only changes the next 1 to 3 hours of the published curve. `pvensemble knmi --score` compares forecast, rule and raw KNMI on the archive.
+The nowcast is only used when the last measured hour was more than 20 % off the forecast and KNMI corrects in the same direction. That rule came out best in the author's backtest. It only changes the next 1 to 3 hours of the published curve. `roofcast knmi --score` compares forecast, rule and raw KNMI on the archive.
 
 ## Limitations
 
