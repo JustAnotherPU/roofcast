@@ -1,0 +1,57 @@
+# Example Home Assistant package for ha-pv-ensemble.
+# Put it in config/packages/ (with `homeassistant: packages: !include_dir_named packages`) and adapt the names.
+# Entity ids below match the defaults of config.example.yaml.
+
+input_boolean:
+  pv_forecast_use_ensemble:
+    name: Use ha-pv-ensemble forecast for EMHASS
+    icon: mdi:solar-power-variant
+
+template:
+  - binary_sensor:
+      # On when the last publication is younger than 2 h and came from at least 3 weather models.
+      - name: PV forecast fresh
+        unique_id: pv_forecast_fresh
+        device_class: connectivity
+        state: >-
+          {% set g = state_attr('sensor.pv_forecast_today', 'generated_at') %}
+          {% set n = state_attr('sensor.pv_forecast_today', 'models_ok') | int(0) %}
+          {{ g is not none and (now() - as_datetime(g)).total_seconds() < 7200 and n >= 3 }}
+
+  - sensor:
+      # The forecast EMHASS should use: this one when the switch is on and it is fresh, otherwise another
+      # Solcast-format sensor you already have (change the fallback entity id to yours, or remove it).
+      - name: PV forecast source
+        unique_id: pv_forecast_source
+        state: >-
+          {{ 'sensor.pv_forecast_today'
+             if is_state('input_boolean.pv_forecast_use_ensemble', 'on') and is_state('binary_sensor.pv_forecast_fresh', 'on')
+             else 'sensor.solcast_pv_forecast_forecast_today' }}
+
+# UNTESTED EXAMPLE: pass the 30-min curve to EMHASS as runtime parameter `pv_power_forecast` (W, one value per
+# optimization step, starting at the current step). Check it against your EMHASS version, its optimization_time_step
+# (30 min assumed here) and prediction_horizon before relying on it. EMHASS URL is an example.
+rest_command:
+  emhass_naive_mpc_optim:
+    url: http://localhost:5000/action/naive-mpc-optim
+    method: POST
+    content_type: application/json
+    payload: >-
+      {% set src = states('sensor.pv_forecast_source') %}
+      {% set rows = state_attr(src, 'detailedForecast') or [] %}
+      {% set t0 = now().timestamp() - 1800 %}
+      {% set ns = namespace(w=[]) %}
+      {% for r in rows if as_timestamp(r.period_start) > t0 %}
+        {% set ns.w = ns.w + [ (r.pv_estimate * 1000) | round(0) ] %}
+      {% endfor %}
+      {{ {'pv_power_forecast': ns.w[:48], 'prediction_horizon': [ns.w | length, 48] | min} | tojson }}
+
+# Example trigger (also untested): re-run the optimization after every publication.
+# automation:
+#   - alias: EMHASS MPC after PV forecast update
+#     triggers:
+#       - trigger: state
+#         entity_id: sensor.pv_forecast_today
+#         attribute: generated_at
+#     actions:
+#       - action: rest_command.emhass_naive_mpc_optim

@@ -1,0 +1,22 @@
+# runtime data (database, calibration, horizon mask, cache, KNMI files)
+data/
+*.db
+*.db-journal
+*.grb2
+cache/
+calibration.json
+horizon.json
+horizon.json.bak-*
+# local config and secrets
+config.yaml
+.env
+*.env
+!deploy/systemd/pvensemble.env.example
+# python
+.venv/
+venv/
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/

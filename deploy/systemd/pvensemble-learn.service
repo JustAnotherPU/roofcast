@@ -1,0 +1,23 @@
+[Unit]
+Description=ha-pv-ensemble nightly calibration
+After=network-online.target
+Wants=network-online.target
+# the Open-Meteo previous-runs API sometimes times out at night: retry up to 3 times, 20 min apart
+StartLimitIntervalSec=4h
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+User=pvensemble
+Group=pvensemble
+EnvironmentFile=/etc/pvensemble/pvensemble.env
+StateDirectory=pvensemble
+WorkingDirectory=/var/lib/pvensemble
+ExecStart=/opt/pvensemble/venv/bin/pvensemble -c /etc/pvensemble/config.yaml learn
+TimeoutStartSec=900
+Restart=on-failure
+RestartSec=20min
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

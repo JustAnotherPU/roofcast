@@ -1,0 +1,78 @@
+# Copy to config.yaml and edit. Secrets are NOT stored here: they come from environment variables.
+
+location:
+  latitude: 52.37        # placeholder: Amsterdam city centre. Use your own roof.
+  longitude: 4.90
+  altitude: 50           # metres
+  timezone: Europe/Amsterdam
+
+# One entry per independently measured array (usually one MPPT input).
+# azimuth: 180 = south, 90 = east, 270 = west. tilt: 0 = flat.
+# kwp is the nameplate; the real level is learned from your data.
+arrays:
+  - name: south
+    azimuth: 180
+    tilt: 35
+    kwp: 6.0
+    actual_entity: sensor.inverter_pv1_power
+  - name: west
+    azimuth: 270
+    tilt: 30
+    kwp: 4.0
+    actual_entity: sensor.inverter_pv2_power
+  # An array with two orientations on one MPPT: list its faces instead of azimuth/tilt/kwp.
+  # - name: east_west
+  #   faces:
+  #     - {azimuth: 90, tilt: 15, kwp: 2.0}
+  #     - {azimuth: 270, tilt: 15, kwp: 2.0}
+  #   actual_entity: [sensor.inverter2_pv1_power, sensor.inverter2_pv2_power]
+  #   since: 2026-06-01   # added later: data before this date is ignored for it, it counts as 0 before
+
+power_unit: W               # unit of the actual_entity sensors: W or kW
+inverter_ac_limit_kw: 8.0   # total AC limit, the forecast is clipped to it
+# pv_cap_kw: 10.0           # hourly value above this = sensor glitch (default: total kWp)
+
+home_assistant:
+  url: http://homeassistant.local:8123
+  token_env: HA_TOKEN       # long-lived access token is read from this environment variable
+
+publish:
+  today: sensor.pv_forecast_today
+  tomorrow: sensor.pv_forecast_tomorrow
+
+# Optional: drop hours where PV may have been throttled (battery full and not exporting).
+# curtailment:
+#   battery_soc_entity: sensor.battery_soc
+#   grid_power_entity: sensor.grid_power     # positive = import, negative = export, in W
+#   soc_full_pct: 97
+#   export_threshold_w: -300
+
+# Optional: archive other forecasts already in HA and score them the same way (attributes *_wmape_7d/30d).
+# compare:
+#   solcast_entities: [sensor.solcast_pv_forecast_forecast_today, sensor.solcast_pv_forecast_forecast_tomorrow]
+#   open_meteo_entities: [sensor.energy_production_today, sensor.energy_production_tomorrow]
+
+history_days: 150           # how far back learn reads HA statistics and Open-Meteo previous runs
+data_dir: ./data            # SQLite archive, calibration.json, horizon.json, cache
+
+models:                     # Open-Meteo model names; drop the ones that do not cover your area
+  - icon_seamless
+  - ecmwf_ifs025
+  - ecmwf_aifs025_single
+  - meteofrance_seamless
+  - knmi_harmonie_arome_europe
+  - ukmo_seamless
+  - dmi_seamless
+  - gfs_seamless
+
+new_array:
+  start_efficiency: 0.85    # used before any calibration exists, and for a new array with < min_hours of data
+  min_hours: 6
+  level_only_hours: 150     # a new array gets a level only (no shape) until it has this many hours
+
+horizon_mask: true          # use data_dir/horizon.json if present (see `pvensemble horizon`)
+
+knmi:
+  enabled: false            # Benelux only. Needs the [knmi] extra and a KNMI Data Platform key.
+  api_key_env: KNMI_API_KEY
+  max_age_s: 3600

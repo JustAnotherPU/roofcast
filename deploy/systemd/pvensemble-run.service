@@ -1,0 +1,18 @@
+[Unit]
+Description=ha-pv-ensemble forecast run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pvensemble
+Group=pvensemble
+EnvironmentFile=/etc/pvensemble/pvensemble.env
+StateDirectory=pvensemble
+WorkingDirectory=/var/lib/pvensemble
+ExecStart=/opt/pvensemble/venv/bin/pvensemble -c /etc/pvensemble/config.yaml run
+TimeoutStartSec=900
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

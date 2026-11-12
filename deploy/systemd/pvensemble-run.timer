@@ -1,0 +1,10 @@
+[Unit]
+Description=ha-pv-ensemble forecast every 15 minutes
+
+[Timer]
+# offset of 7 min kept from the original schedule
+OnCalendar=*-*-* *:07,22,37,52:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

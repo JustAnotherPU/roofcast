@@ -1,0 +1,19 @@
+# Optional, Benelux only. Needs knmi.enabled: true, the [knmi] extra and KNMI_API_KEY in the env file.
+[Unit]
+Description=ha-pv-ensemble KNMI satellite nowcast
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pvensemble
+Group=pvensemble
+EnvironmentFile=/etc/pvensemble/pvensemble.env
+StateDirectory=pvensemble
+WorkingDirectory=/var/lib/pvensemble
+ExecStart=/opt/pvensemble/venv/bin/pvensemble -c /etc/pvensemble/config.yaml knmi
+TimeoutStartSec=300
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ha-pv-ensemble"
+version = "0.1.0"
+description = "Self-calibrating multi-model solar PV forecast for Home Assistant (Solcast-compatible output for EMHASS)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=3.0",
+    "pvlib>=0.16",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "websocket-client>=1.7",
+]
+
+[project.optional-dependencies]
+knmi = ["eccodes>=1.7"]
+test = ["pytest>=8"]
+
+[project.scripts]
+pvensemble = "pvensemble.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
