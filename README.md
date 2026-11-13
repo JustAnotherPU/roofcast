@@ -2,7 +2,7 @@
 
 A solar PV forecast for Home Assistant that learns from your own inverter data. It pulls several weather models from Open-Meteo, turns each one into a PV estimate per array with pvlib, corrects each estimate with what your panels actually produced, and publishes the ensemble to Home Assistant in the same format as the Solcast integration, so EMHASS and existing cards can read it without changes.
 
-It runs as a small Python program next to Home Assistant (a container, a VM, a Raspberry Pi), started by systemd timers or as a Docker container. It is not a custom integration.
+It runs as a small Python program next to Home Assistant (a container, a VM, a Raspberry Pi), started by systemd timers, as a Docker container or as a Home Assistant add-on. It is not a custom integration.
 
 ## Why
 
@@ -88,6 +88,10 @@ docker logs -f roofcast
 The container runs as uid 1000, so the `data` folder must be writable by that user. Any argument runs that one command instead of the schedule, for example `docker run --rm --env-file roofcast.env -v "$PWD/config:/config:ro" -v "$PWD/data:/data" roofcast horizon`.
 
 To try it without touching what EMHASS uses, publish under other names (`publish.today`, `publish.tomorrow`), list your current forecast under `compare`, and read the `*_wmape_7d` attributes after a few days.
+
+### Home Assistant add-on
+
+On Home Assistant OS, add `https://github.com/JustAnotherPU/roofcast` as an add-on repository (Settings > Add-ons > Add-on store > Repositories), install RoofCast and follow the add-on's Documentation tab. It runs the same schedule as the Docker image above and reaches Home Assistant through the Supervisor, so it needs no token.
 
 ## Configuration
 
