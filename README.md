@@ -104,7 +104,7 @@ recorder:
       - sensor.pv_forecast_tomorrow
 ```
 
-`ha/pv_forecast.yaml` is an example package with a switch to choose between this forecast and another one, a freshness sensor (published less than 2 h ago, at least 3 models), and an example REST command that passes the curve to EMHASS as `pv_power_forecast`. The EMHASS part is untested: check the time step and horizon against your EMHASS setup.
+`ha/pv_forecast.yaml` is an example package with a switch to choose between this forecast and another one, a freshness sensor (published less than 2 h ago, at least 3 models), and an example REST command for an EMHASS MPC run. It sends the curve as `pv_power_forecast` with a timestamp per slot, so it works with a 15, 30 or 60-min EMHASS time step, plus `pv_power_forecast_p10` (EMHASS 0.18.4 or newer) and `soc_init`. Set the time step, horizon and battery SOC sensor at the top of the payload. EMHASS does not read the sensor by itself: it only sees the forecast through a call like this one. The REST command was checked against EMHASS 0.18.8's request parsing but has not been run end to end yet.
 
 ## Accuracy tracking
 
