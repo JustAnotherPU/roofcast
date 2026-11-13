@@ -1,0 +1,12 @@
+name: RoofCast
+version: "0.1.0"
+slug: roofcast
+description: Solar PV forecast that learns from your own inverter data, in the Solcast format
+url: https://github.com/JustAnotherPU/roofcast
+arch:
+  - aarch64
+  - amd64
+init: false
+homeassistant_api: true
+map:
+  - addon_config:rw

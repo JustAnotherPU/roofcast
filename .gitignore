@@ -8,7 +8,8 @@ calibration.json
 horizon.json
 horizon.json.bak-*
 # local config and secrets
-config.yaml
+/config.yaml
+config/
 .env
 *.env
 !deploy/systemd/roofcast.env.example
