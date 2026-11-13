@@ -21,7 +21,7 @@ def no_network(monkeypatch):
 
 @pytest.fixture
 def cfg(tmp_path):
-    c = load(os.path.join(ROOT, 'config.example.yaml'))
+    c = load(os.path.join(ROOT, 'roofcast.example.yaml'))
     c.data_dir = str(tmp_path / 'data')
     return c
 

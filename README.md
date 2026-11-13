@@ -33,7 +33,7 @@ git clone <this repository> roofcast && cd roofcast
 sudo python3 -m venv /opt/roofcast/venv
 sudo /opt/roofcast/venv/bin/pip install .                                # or '.[knmi]' for the nowcast
 sudo mkdir -p /etc/roofcast
-sudo cp config.example.yaml /etc/roofcast/config.yaml                    # then edit it
+sudo cp roofcast.example.yaml /etc/roofcast/config.yaml                    # then edit it
 sudo cp deploy/systemd/roofcast.env.example /etc/roofcast/roofcast.env
 sudo chmod 600 /etc/roofcast/roofcast.env                              # put the HA token in it
 sudo cp deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
@@ -78,7 +78,7 @@ The image runs the same schedule as the systemd timers: `run` every 15 minutes, 
 ```sh
 git clone <this repository> roofcast && cd roofcast
 docker build -t roofcast .                       # add --build-arg EXTRAS=knmi for the nowcast
-mkdir -p config data && cp config.example.yaml config/config.yaml   # edit it, set data_dir: /data
+mkdir -p config data && cp roofcast.example.yaml config/config.yaml   # edit it, set data_dir: /data
 echo 'HA_TOKEN=paste-a-home-assistant-long-lived-token-here' > roofcast.env && chmod 600 roofcast.env
 docker run -d --name roofcast --restart unless-stopped --env-file roofcast.env \
   -v "$PWD/config:/config:ro" -v "$PWD/data:/data" roofcast
@@ -95,7 +95,7 @@ On Home Assistant OS, add `https://github.com/JustAnotherPU/roofcast` as an add-
 
 ## Configuration
 
-Everything is in `config.example.yaml`, with comments. The parts that matter most:
+Everything is in `roofcast.example.yaml`, with comments. The parts that matter most:
 
 - `location`: your latitude, longitude, altitude and IANA time zone.
 - `arrays`: one entry per independently measured input (usually one MPPT). Give azimuth (180 = south), tilt and nameplate kWp, and the HA power sensor(s) for that input in `actual_entity`. If one input has panels facing two ways, list them under `faces`. Orientation matters more than kWp: the level is learned, the geometry is not.

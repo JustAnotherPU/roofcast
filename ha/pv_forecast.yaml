@@ -1,6 +1,6 @@
 # Example Home Assistant package for roofcast.
 # Put it in config/packages/ (with `homeassistant: packages: !include_dir_named packages`) and adapt the names.
-# Entity ids below match the defaults of config.example.yaml.
+# Entity ids below match the defaults of roofcast.example.yaml.
 
 input_boolean:
   pv_forecast_use_ensemble:

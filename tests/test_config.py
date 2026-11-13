@@ -8,7 +8,7 @@ from roofcast.config import ConfigError, parse
 
 from conftest import ROOT
 
-BASE = yaml.safe_load(open(f'{ROOT}/config.example.yaml'))
+BASE = yaml.safe_load(open(f'{ROOT}/roofcast.example.yaml'))
 
 
 def mk(**over):
