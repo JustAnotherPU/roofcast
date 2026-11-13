@@ -29,8 +29,8 @@ template:
              if is_state('input_boolean.pv_forecast_use_ensemble', 'on') and is_state('binary_sensor.pv_forecast_fresh', 'on')
              else 'sensor.solcast_pv_forecast_forecast_today' }}
 
-# EXAMPLE: pass the forecast to EMHASS for an MPC run. Checked against the request parsing of EMHASS 0.18.8, not
-# yet run end to end. pv_power_forecast_p10 needs EMHASS 0.18.4 or newer.
+# EXAMPLE: pass the forecast to EMHASS for an MPC run. Tested on EMHASS 0.18.8: payload POSTed to a live instance at a
+# 15-min step, and run offline at 15 and 30 min. A 60-min step is untested. pv_power_forecast_p10 needs 0.18.4 or newer.
 # The curve goes as a timestamp -> W mapping, so EMHASS places each 30-min slot by its time and holds it until the
 # next one. That works for a 15, 30 or 60-min optimization_time_step (a plain list would be read as one value per
 # step, which on a 15-min step squeezes the day into half the time without a warning).
