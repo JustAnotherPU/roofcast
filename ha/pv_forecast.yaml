@@ -29,24 +29,28 @@ template:
              if is_state('input_boolean.pv_forecast_use_ensemble', 'on') and is_state('binary_sensor.pv_forecast_fresh', 'on')
              else 'sensor.solcast_pv_forecast_forecast_today' }}
 
-# EXAMPLE: pass the forecast to EMHASS for an MPC run. Tested on EMHASS 0.18.8: payload POSTed to a live instance at a
-# 15-min step, and run offline at 15 and 30 min. A 60-min step is untested. pv_power_forecast_p10 needs 0.18.4 or newer.
-# The curve goes as a timestamp -> W mapping, so EMHASS places each 30-min slot by its time and holds it until the
-# next one. That works for a 15, 30 or 60-min optimization_time_step (a plain list would be read as one value per
-# step, which on a 15-min step squeezes the day into half the time without a warning).
-# Adapt the four settings at the top of the payload. EMHASS URL is an example.
-# - step_min must match optimization_time_step in your EMHASS config; it only sets prediction_horizon. If it is
-#   smaller than the real step, the horizon runs past the forecast and EMHASS holds the last value (zero at night).
-# - soc_entity is your battery SOC sensor in %. Without soc_init EMHASS starts every run from
-#   battery_target_state_of_charge instead of the real SOC. If the sensor is unavailable the template fails and
-#   nothing is sent, rather than planning from a made-up SOC. soc_final is left to your EMHASS config.
+# EXAMPLE: pass the forecast to EMHASS for an MPC run. pv_power_forecast_p10 needs EMHASS 0.18.4 or newer.
+# Tested on EMHASS 0.18.8: rendered on Home Assistant 2026.11 with real RoofCast and Solcast sensors and 71 edge-case
+# checks, payloads run offline at 15 and 30-min steps; the previous version was also POSTed to a live instance at a
+# 15-min step. A 60-min step is untested. Adapt the four settings at the top of the payload. EMHASS URL is an example.
+# - The curve goes as a timestamp -> W mapping, so EMHASS places each 30-min slot by its time and holds it until the
+#   next one (a plain list would be read as one value per step, which on a 15-min step squeezes the day into half
+#   the time without a warning).
+# - Because EMHASS holds values forward and backfills before the first one, it cannot see a gap. The payload only
+#   sends an unbroken run of 30-min rows starting at the row that contains "now", sorted, without duplicates, and
+#   stops at the first missing slot or invalid value. The selected source is tried first, then the fallback; the
+#   first that covers 5 steps is sent. If none does (EMHASS refuses a shorter MPC horizon), the PV keys are left
+#   out and EMHASS uses its configured forecast method.
+# - step_min must match optimization_time_step in your EMHASS config; it only sets prediction_horizon.
+# - soc_entity is your battery SOC sensor in %, clamped to 0..100. Without soc_init EMHASS starts every run from
+#   battery_target_state_of_charge instead of the real SOC. If its state is not a finite number (unavailable,
+#   unknown, nan) the template fails and nothing is sent, rather than planning from a made-up SOC. soc_final is
+#   left to your EMHASS config.
 #   No battery: remove the soc_init entry.
-# - P10 is sent as pv_power_forecast_p10. It only changes the plan when weather_forecast_pv_quantile_bias is above 0
-#   (0 is the default), set in the EMHASS config or added to this payload: the plan then uses
-#   bias * P10 + (1 - bias) * P50.
+# - P10 is sent as pv_power_forecast_p10, capped at P50 (P50 when missing). It only changes the plan when
+#   weather_forecast_pv_quantile_bias is above 0 (0 is the default), set in the EMHASS config or added to this
+#   payload: the plan then uses bias * P10 + (1 - bias) * P50.
 # - The Solcast integration splits today and tomorrow over two sensors, so the fallback reads both.
-# With no forecast rows, or less than 5 steps of them (EMHASS refuses a shorter MPC horizon), the PV keys are left
-# out and EMHASS uses its configured forecast method.
 rest_command:
   emhass_naive_mpc_optim:
     url: http://localhost:5000/action/naive-mpc-optim
@@ -58,26 +62,63 @@ rest_command:
       {%- set soc_entity = 'sensor.battery_soc' -%}
       {%- set fallback = ['sensor.solcast_pv_forecast_forecast_today', 'sensor.solcast_pv_forecast_forecast_tomorrow'] -%}
       {%- set src = states('sensor.pv_forecast_source') -%}
-      {%- set ns = namespace(rows=[]) -%}
-      {%- for e in (fallback if src in fallback or src in ['unknown', 'unavailable'] else [src]) -%}
-        {%- set ns.rows = ns.rows + (state_attr(e, 'detailedForecast') or []) -%}
+      {#- Sources tried in order (the sensors of one source are merged): the selected one, then the fallback. -#}
+      {%- set sources = [fallback] if src in fallback or src in ['unknown', 'unavailable'] else [[src], fallback] -%}
+      {%- set g = namespace(groups=[]) -%}
+      {%- for one in sources -%}
+        {%- set m = namespace(rows=[]) -%}
+        {%- for e in one -%}
+          {%- set a = state_attr(e, 'detailedForecast') -%}
+          {%- set m.rows = m.rows + (a if a is list else []) -%}
+        {%- endfor -%}
+        {%- set g.groups = g.groups + [m.rows] -%}
       {%- endfor -%}
-      {%- set t0 = now().timestamp() - 1800 -%}
-      {%- set out = namespace(k=[], p50=[], p10=[], last=0) -%}
-      {%- for r in ns.rows if as_timestamp(r.period_start, 0) > t0 -%}
-        {%- set ts = as_timestamp(r.period_start) -%}
-        {%- set out.k = out.k + [ts | timestamp_utc] -%}
-        {%- set out.p50 = out.p50 + [(r.pv_estimate * 1000) | round(0)] -%}
-        {%- set out.p10 = out.p10 + [((r.pv_estimate10 if r.pv_estimate10 is number else r.pv_estimate) * 1000) | round(0)] -%}
-        {%- set out.last = [out.last, ts] | max -%}
-      {%- endfor -%}
+      {%- set groups = g.groups -%}
+      {%- set soc_state = states(soc_entity) -%}
+      {%- set slot = 1800 -%}
+      {%- set now_ts = now().timestamp() -%}
       {%- set max_steps = (horizon_h * 60 / step_min) | int -%}
-      {%- set p = {'soc_init': ([states(soc_entity) | float, 100] | min / 100) | round(3), 'prediction_horizon': max_steps} -%}
-      {%- set covered = ((out.last + 1800 - now().timestamp()) / (step_min * 60)) | int -%}
-      {%- if out.k | count > 0 and covered >= 5 -%}
-        {%- set p = dict(p, prediction_horizon=[covered, max_steps] | min,
-                         pv_power_forecast=dict(zip(out.k, out.p50)),
-                         pv_power_forecast_p10=dict(zip(out.k, out.p10))) -%}
+      {%- set best = namespace(k=[], p50=[], p10=[], steps=0) -%}
+      {%- for rows in groups -%}
+        {%- if best.steps < 5 -%}
+          {%- set c = namespace(items=[]) -%}
+          {%- for r in rows -%}
+            {%- set t = as_timestamp(r.period_start, none) if r is mapping else none -%}
+            {%- if t is number and t > now_ts - slot -%}
+              {%- set c.items = c.items + [{'t': t, 'p50': r.pv_estimate, 'p10': r.pv_estimate10}] -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set w = namespace(k=[], p50=[], p10=[], next=none, ok=true) -%}
+          {%- for it in c.items | sort(attribute='t') -%}
+            {%- if w.ok and not (w.next is number and it.t < w.next) -%}
+              {%- set v = it.p50 -%}
+              {%- set good = v is number and v is not boolean and is_number(v) and v >= 0 -%}
+              {%- set w.ok = good and (it.t <= now_ts if w.next is none else it.t == w.next) -%}
+              {%- if w.ok -%}
+                {%- set q = it.p10 -%}
+                {%- set q = [q, v] | min if (q is number and q is not boolean and q == q and q >= 0) else v -%}
+                {%- set w.k = w.k + [it.t | timestamp_utc] -%}
+                {%- set w.p50 = w.p50 + [(v * 1000) | round(0)] -%}
+                {%- set w.p10 = w.p10 + [(q * 1000) | round(0)] -%}
+                {%- set w.next = it.t + slot -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set steps = [(((w.next - now_ts) / (step_min * 60)) | int) if w.next is number else 0, max_steps] | min -%}
+          {%- if steps >= 5 -%}
+            {%- set best.k = w.k -%}
+            {%- set best.p50 = w.p50 -%}
+            {%- set best.p10 = w.p10 -%}
+            {%- set best.steps = steps -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- set soc = [[(soc_state if is_number(soc_state) else 'no SOC') | float / 100, 0] | max, 1] | min -%}
+      {%- set p = {'soc_init': soc | round(3), 'prediction_horizon': max_steps} -%}
+      {%- if best.steps >= 5 -%}
+        {%- set p = dict(p, prediction_horizon=best.steps,
+                         pv_power_forecast=dict(zip(best.k, best.p50)),
+                         pv_power_forecast_p10=dict(zip(best.k, best.p10))) -%}
       {%- endif -%}
       {{ p | tojson }}
 
