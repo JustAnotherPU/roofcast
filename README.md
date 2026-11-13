@@ -1,6 +1,6 @@
 # RoofCast
 
-A solar PV forecast for Home Assistant that learns from your own inverter data. It pulls several weather models from Open-Meteo, turns each one into a PV estimate per array with pvlib, corrects each estimate with what your panels actually produced, and publishes the ensemble to Home Assistant in the same format as the Solcast integration, so EMHASS and existing cards can read it without changes.
+A solar PV forecast for Home Assistant that learns from your own inverter data. It pulls several weather models from Open-Meteo, turns each one into a PV estimate per array with pvlib, corrects each estimate with what your panels actually produced, and publishes the ensemble to Home Assistant in the same format as the Solcast integration, so existing cards can read it without changes and EMHASS can take it through the example REST command.
 
 It runs as a small Python program next to Home Assistant (a container, a VM, a Raspberry Pi), started by systemd timers. It is not a custom integration.
 
@@ -104,7 +104,7 @@ recorder:
       - sensor.pv_forecast_tomorrow
 ```
 
-`ha/pv_forecast.yaml` is an example package with a switch to choose between this forecast and another one, a freshness sensor (published less than 2 h ago, at least 3 models), and an example REST command that passes the curve to EMHASS as `pv_power_forecast`. The EMHASS part is untested: check the time step and horizon against your EMHASS setup.
+`ha/pv_forecast.yaml` is an example package with a switch to choose between this forecast and another one, a freshness sensor (published less than 2 h ago, at least 3 models), and an example REST command for an EMHASS MPC run (EMHASS 0.18.8 or newer). It sends the curve as `pv_power_forecast` with a timestamp per slot, so it works with any EMHASS time step, plus `pv_power_forecast_p10` and `soc_init`. Set the time step, horizon and battery SOC sensor at the top of the payload. EMHASS does not read the sensor by itself: it only sees the forecast through a call like this one.
 
 ## Accuracy tracking
 
