@@ -102,17 +102,19 @@ Everything is in `roofcast.example.yaml`, with comments. The parts that matter m
 - `since`: for an array added later. Before that date it counts as zero and its data is ignored. Until it has `new_array.level_only_hours` of data it gets a level only, starting from `new_array.start_efficiency`.
 - `power_unit`: `W` or `kW`, the unit of your sensors. With a wrong unit, `learn` logs the reason and exits with an error instead of writing a calibration.
 - `inverter_ac_limit_kw`: the forecast is clipped to it.
-- `curtailment`: battery SoC and grid power sensors, to drop hours where a full battery may have throttled the PV. Set both or neither.
+- `curtailment`: battery SoC and grid power sensors, to drop hours where a full battery may have throttled the PV. Set both or neither. The grid sensor must be in W, whatever `power_unit` says, because `export_threshold_w` is compared with it as is.
 - `compare`: Solcast or Open-Meteo integration sensors to archive and score next to this forecast.
+- `home_assistant.url`: the default is `http://homeassistant.local:8123`. A systemd service on a headless host, or a Docker container, may not be able to resolve `.local` names, so an IP address is more reliable. The add-on uses `http://supervisor/core` instead and doesn't need this.
+- `models`: two of the defaults only have their own data for Europe. Outside Europe, `knmi_harmonie_arome_europe` returns no data, so it never gets a calibration: the `models` attribute shows it as `no calibration` (`failed` until the first successful `learn`) and the other models still publish. `dmi_seamless` returns the same values as ECMWF IFS there, so the ensemble gets IFS twice, next to `ecmwf_ifs025`. Drop both there.
 
-The HA token is read from the `HA_TOKEN` environment variable, never from the file. The power sensors must have `state_class: measurement` so that HA keeps long-term statistics for them: learning reads hourly means from those statistics.
+The HA token is read from the `HA_TOKEN` environment variable, never from the file. `actual_entity` must be a power sensor (W or kW) with `state_class: measurement`, so that HA keeps long-term statistics for it: learning reads the hourly mean from those statistics. Energy sensors (`state_class: total_increasing`, kWh) do not work, because they have no mean. `learn` then finds no usable hours and exits with an error instead of writing a calibration.
 
 ## Home Assistant and EMHASS
 
 Two sensors are published (names configurable):
 
 - `sensor.pv_forecast_today`: state = P50 kWh today. Attributes: `p10`, `p25`, `p90`, `detailedForecast` (30-min slots for today and the next two days, Solcast keys `period_start`, `pv_estimate`, `pv_estimate10`, `pv_estimate90`, plus `pv_estimate25`, values in kW), `per_array` (hourly P50 per array, adds up to the total), `models_ok`, `models`, `generated_at`, `level_factor`, `knmi`, and accuracy stats such as `ensemble_wmape_30d`.
-- `sensor.pv_forecast_tomorrow`: the same for tomorrow, plus `day_after_tomorrow_p50`.
+- `sensor.pv_forecast_tomorrow`: state = P50 kWh tomorrow. Attributes: `p10`, `p25`, `p90`, `day_after_tomorrow_p50`, and the common ones (`models_ok`, `models`, `generated_at`, `level_factor`, `knmi` and so on). It has no `detailedForecast`, `per_array` or accuracy stats. Those are only on the today sensor, which covers today plus the next two days.
 
 These are state objects written through the REST API. They are not tied to an integration, so they disappear after an HA restart until the next run (at most 15 minutes).
 
