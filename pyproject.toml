@@ -11,7 +11,7 @@ license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",
-    "pandas>=3.0",
+    "pandas>=2.3",
     "pvlib>=0.16",
     "requests>=2.31",
     "pyyaml>=6.0",
