@@ -2,7 +2,7 @@
 
 A solar PV forecast for Home Assistant that learns from your own inverter data. It pulls several weather models from Open-Meteo, turns each one into a PV estimate per array with pvlib, corrects each estimate with what your panels actually produced, and publishes the ensemble to Home Assistant in the same format as the Solcast integration, so EMHASS and existing cards can read it without changes.
 
-It runs as a small Python program next to Home Assistant (a container, a VM, a Raspberry Pi), started by systemd timers. It is not a custom integration.
+It runs as a small Python program next to Home Assistant (a container, a VM, a Raspberry Pi), started by systemd timers or as a Docker container. It is not a custom integration.
 
 ## Why
 
@@ -70,6 +70,24 @@ sudo systemd-run --pipe --wait --quiet --uid=roofcast --gid=roofcast \
   -p EnvironmentFile=/etc/roofcast/roofcast.env -p WorkingDirectory=/var/lib/roofcast \
   /opt/roofcast/venv/bin/roofcast -c /etc/roofcast/config.yaml horizon
 ```
+
+### Docker
+
+The image runs the same schedule as the systemd timers: `run` every 15 minutes, `learn` at 01:30 UTC with up to three retries, and `knmi` if it is enabled in the config. On first start it runs `learn` before anything else, so the first published forecast is already calibrated on your history.
+
+```sh
+git clone <this repository> roofcast && cd roofcast
+docker build -t roofcast .                       # add --build-arg EXTRAS=knmi for the nowcast
+mkdir -p config data && cp config.example.yaml config/config.yaml   # edit it, set data_dir: /data
+echo 'HA_TOKEN=paste-a-home-assistant-long-lived-token-here' > roofcast.env && chmod 600 roofcast.env
+docker run -d --name roofcast --restart unless-stopped --env-file roofcast.env \
+  -v "$PWD/config:/config:ro" -v "$PWD/data:/data" roofcast
+docker logs -f roofcast
+```
+
+The container runs as uid 1000, so the `data` folder must be writable by that user. Any argument runs that one command instead of the schedule, for example `docker run --rm --env-file roofcast.env -v "$PWD/config:/config:ro" -v "$PWD/data:/data" roofcast horizon`.
+
+To try it without touching what EMHASS uses, publish under other names (`publish.today`, `publish.tomorrow`), list your current forecast under `compare`, and read the `*_wmape_7d` attributes after a few days.
 
 ## Configuration
 
