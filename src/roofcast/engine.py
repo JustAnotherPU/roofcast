@@ -326,13 +326,28 @@ class Engine:
         start = (today - pd.DateOffset(days=cfg.history_days)).date().isoformat()
         # only hours that have an archived forecast: learning in the daytime would otherwise add y > 0 with x = 0
         stop = min(today.tz_convert('UTC'), pd.Timestamp(end, tz='UTC') + pd.Timedelta(days=1))
-        a = raw[(raw.index < stop) & (raw.index >= pd.Timestamp(start, tz='UTC'))]
+        a = raw[(raw.index < stop) & (raw.index >= pd.Timestamp(start, tz='UTC'))].copy()
         for f in os.listdir(self.cache):     # yesterday's cache is replaced
             if end not in f:
                 os.remove(os.path.join(self.cache, f))
         prev = self.load_cal() if os.path.exists(self.cal_path) else {}
         cal = {'generated': self.now().isoformat(), 'n_hours': int(a.ok.sum()), 'models': {}}
         days = np.array(a.index.tz_convert(self.tz).date)
+        # The outage filter in actuals() reads the live archive, which a fresh install does not have yet. Apply the same
+        # rule with the day-ahead previous runs, or hours at ~0 before the panels were installed (or with the inverter
+        # down) enter learning and pull P10/P25 to zero.
+        ref = []
+        for m in cfg.models:
+            try:
+                F = self.pv(self.fetch_prev_runs(m, 1, start, end).reindex(a.index).interpolate(limit=2))
+                ref.append(sum(F[x.name] for x in cfg.arrays))
+            except Exception:
+                pass                                                     # the model loop below logs the failure
+        if ref:
+            dead = (a.total < 0.02) & (pd.concat(ref, axis=1).mean(axis=1) > self.dead_hour_kwh)
+            a.loc[dead, ['ok', 'okb']] = False
+            if dead.any():
+                log('learn:', int(dead.sum()), 'hours at ~0 while the forecast expected production, left out')
         ens = {}
         for m in cfg.models:
             for lead in (0, 1):

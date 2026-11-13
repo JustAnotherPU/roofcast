@@ -77,3 +77,24 @@ def test_cold_start_without_calibration(cfg):
     assert q['fallback'] and q['p50'] == 1.0 and q['p10'] < 1 < q['p90']
     q = quantiles_from_ratios(pd.Series(np.linspace(0.5, 1.5, 40)))
     assert not q['fallback'] and q['p10'] < q['p25'] < q['p50'] < q['p90']
+
+
+def test_fresh_install_drops_zero_hours_before_the_panels(cfg, monkeypatch):
+    """No live archive yet and HA statistics that start with 20 days at 0 W (sensor created before the panels):
+    those hours must not reach learning, or P10/P25 come out as 0."""
+    import json
+
+    eng = Engine(cfg, ha=FakeHA())
+    now = pd.Timestamp('2026-06-30T12:00Z')
+    monkeypatch.setattr(pd.Timestamp, 'now', classmethod(lambda cls, tz=None: now.tz_convert(tz) if tz else now))
+    w = clear_sky_weather(cfg, '2026-05-01', 61 * 24)
+    F = eng.pv(w)
+    before = F.index < pd.Timestamp('2026-05-21', tz='UTC')
+    stats = {x.entities[0]: (F[x.name] * 0.9 * 1000).where(~before, 0.0)
+             for x in cfg.arrays}
+    eng._ha = FakeHA(stats)
+    monkeypatch.setattr(eng, 'fetch_prev_runs', lambda m, lead, s, e: w)
+    cfg.history_days = 60
+    assert eng.learn() == 0
+    q = json.load(open(eng.cal_path))['quantiles']
+    assert q['p10'] > 0.8 and q['p25'] > 0.8, q
