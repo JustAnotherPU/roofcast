@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import sqlite3
 import time
 
@@ -89,18 +90,28 @@ def om_frame(hourly: dict, suffix: str = '') -> pd.DataFrame:
 
 
 def om_get(url: str, params: dict, tries: int = 3, timeout: int = 60):
-    """Open-Meteo sometimes answers 429/5xx in bursts: retry with 20 s then 40 s pauses."""
+    """Open-Meteo sometimes answers 429/5xx in bursts: those, 408, timeouts and connection errors are retried after 20 s,
+    then 40 s. Any other 4xx (a 400 for a model with no data here) fails at once, since a retry gets the same answer.
+    Errors carry Open-Meteo's reason, not the request URL, which holds the site's coordinates."""
     for i in range(tries):
+        last = i == tries - 1
         try:
             r = requests.get(url, params=params, timeout=timeout)
-            if r.status_code in (429, 500, 502, 503, 504) and i < tries - 1:
-                raise requests.HTTPError(r.status_code)
-            r.raise_for_status()
-            return r
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError):
-            if i == tries - 1:
-                raise
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if last:
+                raise type(e)(re.sub(r'\?[^\s)\'"]*', '', str(e))) from None
             time.sleep(20 * (i + 1))
+            continue
+        if r.ok:
+            return r
+        if (r.status_code in (408, 425, 429) or r.status_code >= 500) and not last:
+            time.sleep(20 * (i + 1))
+            continue
+        try:
+            reason = r.json().get('reason')
+        except (ValueError, AttributeError):
+            reason = None
+        raise requests.HTTPError(f'HTTP {r.status_code}: {reason or r.reason or "no reason given"}', response=r)
 
 
 def binkey(o: pd.DataFrame) -> pd.Series:
