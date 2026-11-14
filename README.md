@@ -12,7 +12,7 @@ On the author's roof, over the last 30 days, the day-ahead error (WMAPE of daily
 
 ## How it works
 
-- Eight NWP models through Open-Meteo by default: ICON, ECMWF IFS and AIFS, Meteo-France, KNMI HARMONIE-AROME, UKMO, DMI and GFS. Use the ones that cover your area.
+- Eight NWP models through Open-Meteo by default: ICON, ECMWF IFS and AIFS, Meteo-France, KNMI HARMONIE-AROME, UKMO, DMI and GFS. Use the ones that cover your area (see "Outside Europe" below).
 - pvlib per array: Perez transposition, physical IAM, Faiman cell temperature, a simple temperature coefficient.
 - Nightly calibration per array, per model and per lead day (today or day-ahead), trained on the Open-Meteo Previous Runs API, so each model is judged on the forecast it really gave a day earlier, not on its analysis. The calibration has a level and a shape over solar azimuth x elevation bins. Sparse bins are pulled back toward the level.
 - Optional horizon mask per array, learned from clear days. It only removes part of the direct beam. Diffuse light still reaches a shaded panel.
@@ -22,6 +22,25 @@ On the author's roof, over the last 30 days, the day-ahead error (WMAPE of daily
 - Everything is archived in SQLite: each model's forecast, the published output, the actuals, and optionally Solcast and Open-Meteo integration forecasts for comparison.
 - Day boundaries use local calendar days, so the 23 h and 25 h days at DST changes come out right.
 - Optional KNMI satellite nowcast for the next 1 to 3 hours (Benelux only, see below).
+
+### Outside Europe
+
+The default model list is chosen for Europe. Elsewhere, only the global models have data:
+
+- `knmi_harmonie_arome_europe` answers HTTP 400, "No data is available for this location".
+- `dmi_seamless` returns the same values as `ecmwf_ifs`, so with `ecmwf_ifs025` also in the list the mean gets the same IFS model twice.
+- `icon_seamless`, `ukmo_seamless` and `meteofrance_seamless` still work, but only with their global model.
+
+Open-Meteo has no regional model for Australia or New Zealand. `bom_access_global` answers, but with nulls only: Open-Meteo's docs say BOM suspended its open data during a platform upgrade, and the last run they have is from June 2025, so this may change. The commented `models` list in `roofcast.example.yaml` has eight global models that all had radiation data, in the forecast and in the previous runs, at ten cities across both countries in November 2026. Leave `knmi.enabled` off there.
+
+To check a model at your own location before you add it, look at `shortwave_radiation` in both APIs (these coordinates are central Sydney):
+
+```sh
+curl 'https://api.open-meteo.com/v1/forecast?latitude=-33.87&longitude=151.21&hourly=shortwave_radiation&models=gem_seamless&forecast_days=2'
+curl 'https://previous-runs-api.open-meteo.com/v1/forecast?latitude=-33.87&longitude=151.21&hourly=shortwave_radiation_previous_day1&models=gem_seamless&start_date=2026-06-01&end_date=2026-06-02'
+```
+
+An HTTP 400, or nothing but nulls, means the model has no data there. `learn` fits on the previous runs of the last `history_days` (150 by default), so check a `start_date` that far back, not just last week. If two models return exactly the same values, keep only one of them.
 
 ## Install
 
@@ -98,7 +117,7 @@ On Home Assistant OS, add `https://github.com/JustAnotherPU/roofcast` as an add-
 Everything is in `roofcast.example.yaml`, with comments. The parts that matter most:
 
 - `location`: your latitude, longitude, altitude and IANA time zone.
-- `arrays`: one entry per independently measured input (usually one MPPT). Give azimuth (180 = south), tilt and nameplate kWp, and the HA power sensor(s) for that input in `actual_entity`. If one input has panels facing two ways, list them under `faces`. Orientation matters more than kWp: the level is learned, the geometry is not.
+- `arrays`: one entry per independently measured input (usually one MPPT). Give azimuth (180 = south, 0 = north), tilt and nameplate kWp, and the HA power sensor(s) for that input in `actual_entity`. If one input has panels facing two ways, list them under `faces`. Orientation matters more than kWp: the level is learned, the geometry is not.
 - `since`: for an array added later. Before that date it counts as zero and its data is ignored. Until it has `new_array.level_only_hours` of data it gets a level only, starting from `new_array.start_efficiency`.
 - `power_unit`: `W` or `kW`, the unit of your sensors. With a wrong unit, `learn` logs the reason and exits with an error instead of writing a calibration.
 - `inverter_ac_limit_kw`: the forecast is clipped to it.
