@@ -9,6 +9,7 @@ import requests
 
 from roofcast import engine as E
 from roofcast import horizon
+from roofcast.config import DEFAULT_MODELS
 from roofcast.engine import Engine
 
 from conftest import FakeHA, clear_sky_weather
@@ -216,3 +217,43 @@ def test_crash_while_writing_keeps_the_old_calibration(eng, monkeypatch):
     with open(eng.cal_path) as fh:
         assert fh.read() == old
     assert glob.glob(eng.cal_path + '*.tmp') == []
+
+
+# ---------------------------------------------------------------- level factor
+def _archive_day_ahead(eng, models, days=14, pv=1.1):
+    """Each model said `pv` kWh for 08-16 local on each of the last `days` days, issued 20:00 local the evening before."""
+    c = eng.db()
+    hours, rows = [], []
+    for i in range(1, days + 1):
+        day = NOW.tz_convert(eng.tz).normalize() - pd.DateOffset(days=i)
+        issue = int((day - pd.Timedelta(hours=4)).timestamp())
+        for h in range(8, 17):
+            t = (day + pd.Timedelta(hours=h)).tz_convert('UTC')
+            hours.append(t)
+            rows += [(issue, m, int(t.timestamp()), 0, 0, 0, 0, 0, 0, 0, pv) for m in models]
+    c.executemany('insert or replace into nwp values(?,?,?,?,?,?,?,?,?,?,?)', rows)
+    c.commit()
+    return c, pd.DataFrame({'total': 1.0, 'ok': True}, index=pd.DatetimeIndex(sorted(hours)))
+
+
+def test_level_counts_archived_models_not_configured_ones(eng):
+    """Three models configured, one never answers at the site: the two that do still give a level factor."""
+    c, a = _archive_day_ahead(eng, eng.cfg.models[:2])
+    t = eng.level_day_ahead(c, a)
+    assert len(t) == 14
+    assert E.level_factor(t.y, t.f, [(NOW.tz_convert(eng.tz).date() - d).days for d in t.index])[1] == pytest.approx(1 / 1.1)
+
+
+def test_level_still_skips_days_with_too_few_models(eng):
+    """A model that is archived but missing on some days: those days still need every archived model (up to 4)."""
+    _archive_day_ahead(eng, eng.cfg.models[:3], days=7)
+    c, a = _archive_day_ahead(eng, eng.cfg.models[:2], days=14)      # days 8-14: only two of the three
+    assert len(eng.level_day_ahead(c, a)) == 7
+
+
+def test_level_with_eight_models_still_needs_four(eng):
+    """The default list, every model answering: a day with only three archived models is still skipped."""
+    eng.cfg.models = list(DEFAULT_MODELS)
+    _archive_day_ahead(eng, eng.cfg.models, days=7)
+    c, a = _archive_day_ahead(eng, eng.cfg.models[:3], days=14)
+    assert len(eng.level_day_ahead(c, a)) == 7

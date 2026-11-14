@@ -427,13 +427,16 @@ class Engine:
 
     def level_day_ahead(self, c, a: pd.DataFrame, days: int = LEVEL_DAYS) -> pd.DataFrame:
         """Per local day: y = actual, f = mean of the raw archived members (before k) of the last issue before 21:00 the
-        day before (at most 6 h older, at least min(4, n_models) models), on ok hours only."""
+        day before (at most 6 h older, at least min(4, models configured, models archived in the window) models), on ok
+        hours only."""
         ok = a[a.ok]
         loc = ok.index.tz_convert(self.tz)
         today = self.now().tz_convert(self.tz).date()
-        need = min(4, len(self.cfg.models))
-        iss = pd.read_sql('select distinct issue from nwp where issue >= ?', c,
-                          params=(int((self.now() - pd.Timedelta(days=days + 3)).timestamp()),)).issue
+        since = int((self.now() - pd.Timedelta(days=days + 3)).timestamp())
+        iss = pd.read_sql('select distinct issue from nwp where issue >= ?', c, params=(since,)).issue
+        # a model that never answers here is never archived: counting the configured list instead would keep k at 1
+        live = c.execute('select count(distinct provider) from nwp where issue >= ?', (since,)).fetchone()[0]
+        need = max(1, min(4, len(self.cfg.models), live))
         rows = []
         for d, yh in ok.total.groupby(loc.normalize()):
             cut = (d - pd.Timedelta(hours=3)).timestamp()
