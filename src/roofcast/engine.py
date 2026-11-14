@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import sqlite3
 import time
 
@@ -80,27 +81,45 @@ def detailed_forecast(Q: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp, t
     return rows
 
 
-def om_frame(hourly: dict, suffix: str = '') -> pd.DataFrame:
+def om_frame(hourly: dict, suffix: str = '', model: str = '') -> pd.DataFrame:
     t = pd.to_datetime(hourly['time'], utc=True)
     df = pd.DataFrame({v: hourly.get(v + suffix) if hourly.get(v + suffix) is not None else hourly.get(v) for v in VARS}, index=t).astype(float)
     # Open-Meteo radiation is the mean of the PRECEDING hour: re-index it by the start of that hour.
     df.index = df.index - pd.Timedelta(hours=1)
+    # Nothing at the ground can exceed the irradiance at the top of the atmosphere (about 1320-1410 W/m2), yet Open-Meteo
+    # has served far more (5419 W/m2 in one previous-runs hour). An hour more than 10 % above it is treated as missing.
+    rad = ['shortwave_radiation', 'direct_normal_irradiance', 'diffuse_radiation']
+    bad = df[rad].gt(1.1 * pvlib.irradiance.get_extra_radiation(df.index), axis=0).any(axis=1)
+    if bad.any():
+        log(f'{model or "Open-Meteo"}{suffix}:', int(bad.sum()), 'hour(s) with irradiance above the top of the atmosphere left out,',
+            'first at', df.index[bad][0].isoformat())
+        df.loc[bad, rad] = np.nan
     return df
 
 
 def om_get(url: str, params: dict, tries: int = 3, timeout: int = 60):
-    """Open-Meteo sometimes answers 429/5xx in bursts: retry with 20 s then 40 s pauses."""
+    """Open-Meteo sometimes answers 429/5xx in bursts: those, 408, timeouts and connection errors are retried after 20 s,
+    then 40 s. Any other 4xx (a 400 for a model with no data here) fails at once, since a retry gets the same answer.
+    Errors carry Open-Meteo's reason, not the request URL, which holds the site's coordinates."""
     for i in range(tries):
+        last = i == tries - 1
         try:
             r = requests.get(url, params=params, timeout=timeout)
-            if r.status_code in (429, 500, 502, 503, 504) and i < tries - 1:
-                raise requests.HTTPError(r.status_code)
-            r.raise_for_status()
-            return r
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError):
-            if i == tries - 1:
-                raise
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if last:
+                raise type(e)(re.sub(r'\?[^\s)\'"]*', '', str(e))) from None
             time.sleep(20 * (i + 1))
+            continue
+        if r.ok:
+            return r
+        if (r.status_code in (408, 425, 429) or r.status_code >= 500) and not last:
+            time.sleep(20 * (i + 1))
+            continue
+        try:
+            reason = r.json().get('reason')
+        except (ValueError, AttributeError):
+            reason = None
+        raise requests.HTTPError(f'HTTP {r.status_code}: {reason or r.reason or "no reason given"}', response=r)
 
 
 def binkey(o: pd.DataFrame) -> pd.Series:
@@ -277,7 +296,7 @@ class Engine:
             with open(f, 'w') as fh:
                 json.dump(r.json(), fh)
         with open(f) as fh:
-            return om_frame(json.load(fh)['hourly'], f'_previous_day{lead}')
+            return om_frame(json.load(fh)['hourly'], f'_previous_day{lead}', model)
 
     def fit_model(self, F: pd.DataFrame, a: pd.DataFrame) -> dict:
         """Calibration of one model x lead: {array: {'g': level, 'shape': {bin: factor}}}."""
@@ -330,7 +349,7 @@ class Engine:
         for f in os.listdir(self.cache):     # yesterday's cache is replaced
             if end not in f:
                 os.remove(os.path.join(self.cache, f))
-        prev = self.load_cal() if os.path.exists(self.cal_path) else {}
+        prev = self.load_cal() or {}
         cal = {'generated': self.now().isoformat(), 'n_hours': int(a.ok.sum()), 'models': {}}
         days = np.array(a.index.tz_convert(self.tz).date)
         # The outage filter in actuals() reads the live archive, which a fresh install does not have yet. Apply the same
@@ -390,8 +409,18 @@ class Engine:
         k, raw_k = level_factor(t.y, t.f, [(today.date() - d).days for d in t.index])
         cal['level'] = {'k': round(k, 4), 'raw': round(raw_k, 4), 'days': int(len(t)), 'half_life_days': LEVEL_HALF,
                         'source': 'archived day-ahead members (out of sample)'}
-        with open(self.cal_path, 'w') as fh:
-            json.dump(cal, fh)
+        # written next to it, then renamed over it: a run reading it meanwhile, or a crash halfway, never sees half a file
+        tmp = f'{self.cal_path}.{os.getpid()}.tmp'
+        try:
+            with open(tmp, 'w') as fh:
+                json.dump(cal, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.cal_path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
         log('calibration:', len(cal['models']), 'model x lead,', cal['quantiles'], 'k =', cal['level']['k'])
         c.executemany('insert or replace into actual(hour, total, soc, grid) values(?,?,?,?)',
                       [(int(t.timestamp()), _f(r.total), _f(r.soc), _f(r.grid)) for t, r in raw.iterrows()])
@@ -406,13 +435,16 @@ class Engine:
 
     def level_day_ahead(self, c, a: pd.DataFrame, days: int = LEVEL_DAYS) -> pd.DataFrame:
         """Per local day: y = actual, f = mean of the raw archived members (before k) of the last issue before 21:00 the
-        day before (at most 6 h older, at least min(4, n_models) models), on ok hours only."""
+        day before (at most 6 h older, at least min(4, models configured, models archived in the window) models), on ok
+        hours only."""
         ok = a[a.ok]
         loc = ok.index.tz_convert(self.tz)
         today = self.now().tz_convert(self.tz).date()
-        need = min(4, len(self.cfg.models))
-        iss = pd.read_sql('select distinct issue from nwp where issue >= ?', c,
-                          params=(int((self.now() - pd.Timedelta(days=days + 3)).timestamp()),)).issue
+        since = int((self.now() - pd.Timedelta(days=days + 3)).timestamp())
+        iss = pd.read_sql('select distinct issue from nwp where issue >= ?', c, params=(since,)).issue
+        # a model that never answers here is never archived: counting the configured list instead would keep k at 1
+        live = c.execute('select count(distinct provider) from nwp where issue >= ?', (since,)).fetchone()[0]
+        need = max(1, min(4, len(self.cfg.models), live))
         rows = []
         for d, yh in ok.total.groupby(loc.normalize()):
             cut = (d - pd.Timedelta(hours=3)).timestamp()
@@ -474,19 +506,35 @@ class Engine:
         return out
 
     # ------------------------------------------------------------ forecast run (every 15 min)
-    def load_cal(self) -> dict:
-        with open(self.cal_path) as fh:
-            return json.load(fh)
+    def load_cal(self) -> dict | None:
+        """calibration.json, or None when there is none or its content can't be used (cut short, edited by hand).
+        Other read errors (permissions, I/O) still raise: the file may be fine, so it is not relearned over."""
+        try:
+            with open(self.cal_path) as fh:
+                cal = json.load(fh)
+        except FileNotFoundError:
+            return None
+        except ValueError as e:
+            log('calibration.json unreadable, ignored:', e)
+            return None
+        usable = (isinstance(cal, dict) and isinstance(cal.get('models'), dict) and isinstance(cal.get('quantiles'), dict)
+                  and all(isinstance(cal['quantiles'].get(k), (int, float)) for k in ('p10', 'p25', 'p50', 'p90'))
+                  and isinstance(cal.get('level') or {}, dict))
+        if not usable:      # these are read by run() without a fallback
+            log('calibration.json lacks models, quantiles or level, ignored')
+            return None
+        return cal
 
     def run(self) -> int:
         cfg = self.cfg
-        if not os.path.exists(self.cal_path):
+        cal = self.load_cal()
+        if cal is None:      # missing or unusable: learn first, as on a fresh install
             try:
                 self.learn()
             except Exception as e:
                 log('first learn failed, publishing uncalibrated:', e)
-        cal = self.load_cal() if os.path.exists(self.cal_path) else {'models': {}, 'quantiles': quantiles_from_ratios(pd.Series(dtype=float)),
-                                                                     'generated': None, 'n_hours': 0}
+            cal = self.load_cal() or {'models': {}, 'quantiles': quantiles_from_ratios(pd.Series(dtype=float)),
+                                      'generated': None, 'n_hours': 0}
         now = self.now()
         issue = int(now.timestamp())
         d0, d1, d2, d3 = local_days(now, self.tz)
@@ -501,7 +549,7 @@ class Engine:
             try:
                 r = om_get(FORECAST_URL, dict(latitude=cfg.latitude, longitude=cfg.longitude, hourly=','.join(VARS), models=m,
                                               past_days=1, forecast_days=4, timezone='UTC'))
-                df = om_frame(r.json()['hourly']).dropna(subset=['shortwave_radiation'])
+                df = om_frame(r.json()['hourly'], model=m).dropna(subset=['shortwave_radiation'])
                 if df.empty:
                     raise ValueError('empty response')
                 F = self.pv(df)
