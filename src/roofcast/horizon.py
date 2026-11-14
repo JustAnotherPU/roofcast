@@ -93,7 +93,16 @@ def main(eng: Engine, write: bool = False) -> int:
     end = (today - pd.DateOffset(days=1)).date().isoformat()
     start = (today - pd.DateOffset(days=eng.cfg.history_days)).date().isoformat()
     a = a[a.index >= pd.Timestamp(start, tz='UTC')]
-    R = pd.concat([eng.fetch_prev_runs(m, 0, start, end).reindex(a.index).interpolate(limit=2) for m in eng.cfg.models]).groupby(level=0).mean()
+    R = []
+    for m in eng.cfg.models:
+        try:
+            R.append(eng.fetch_prev_runs(m, 0, start, end).reindex(a.index).interpolate(limit=2))
+        except Exception as e:      # a model with no data at the site must not stop the others
+            log('horizon:', m, 'skipped:', e)
+    if not R:
+        print('no model could be fetched, horizon.json unchanged')
+        return 1
+    R = pd.concat(R).groupby(level=0).mean()
     hz = derive(eng, a, R)
     hz.update({k: v for k, v in eng.horizon.items() if k not in hz})   # arrays not recomputed keep their current mask
     print(json.dumps(hz, indent=1))
