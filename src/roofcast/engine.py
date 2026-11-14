@@ -81,11 +81,19 @@ def detailed_forecast(Q: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp, t
     return rows
 
 
-def om_frame(hourly: dict, suffix: str = '') -> pd.DataFrame:
+def om_frame(hourly: dict, suffix: str = '', model: str = '') -> pd.DataFrame:
     t = pd.to_datetime(hourly['time'], utc=True)
     df = pd.DataFrame({v: hourly.get(v + suffix) if hourly.get(v + suffix) is not None else hourly.get(v) for v in VARS}, index=t).astype(float)
     # Open-Meteo radiation is the mean of the PRECEDING hour: re-index it by the start of that hour.
     df.index = df.index - pd.Timedelta(hours=1)
+    # Nothing at the ground can exceed the irradiance at the top of the atmosphere (about 1320-1410 W/m2), yet Open-Meteo
+    # has served far more (5419 W/m2 in one previous-runs hour). An hour more than 10 % above it is treated as missing.
+    rad = ['shortwave_radiation', 'direct_normal_irradiance', 'diffuse_radiation']
+    bad = df[rad].gt(1.1 * pvlib.irradiance.get_extra_radiation(df.index), axis=0).any(axis=1)
+    if bad.any():
+        log(f'{model or "Open-Meteo"}{suffix}:', int(bad.sum()), 'hour(s) with irradiance above the top of the atmosphere left out,',
+            'first at', df.index[bad][0].isoformat())
+        df.loc[bad, rad] = np.nan
     return df
 
 
@@ -288,7 +296,7 @@ class Engine:
             with open(f, 'w') as fh:
                 json.dump(r.json(), fh)
         with open(f) as fh:
-            return om_frame(json.load(fh)['hourly'], f'_previous_day{lead}')
+            return om_frame(json.load(fh)['hourly'], f'_previous_day{lead}', model)
 
     def fit_model(self, F: pd.DataFrame, a: pd.DataFrame) -> dict:
         """Calibration of one model x lead: {array: {'g': level, 'shape': {bin: factor}}}."""
@@ -541,7 +549,7 @@ class Engine:
             try:
                 r = om_get(FORECAST_URL, dict(latitude=cfg.latitude, longitude=cfg.longitude, hourly=','.join(VARS), models=m,
                                               past_days=1, forecast_days=4, timezone='UTC'))
-                df = om_frame(r.json()['hourly']).dropna(subset=['shortwave_radiation'])
+                df = om_frame(r.json()['hourly'], model=m).dropna(subset=['shortwave_radiation'])
                 if df.empty:
                     raise ValueError('empty response')
                 F = self.pv(df)

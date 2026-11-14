@@ -257,3 +257,42 @@ def test_level_with_eight_models_still_needs_four(eng):
     _archive_day_ahead(eng, eng.cfg.models, days=7)
     c, a = _archive_day_ahead(eng, eng.cfg.models[:3], days=14)
     assert len(eng.level_day_ahead(c, a)) == 7
+
+
+# ---------------------------------------------------------------- impossible irradiance
+def test_irradiance_above_top_of_atmosphere_is_dropped(cfg, capsys):
+    w = clear_sky_weather(cfg, '2026-06-11', 24)
+    h = _hourly(w)
+    h['shortwave_radiation'][14] = 5419.0                  # hour starting 14:00 UTC
+    df = E.om_frame(h, model='dmi_seamless')
+    t = pd.Timestamp('2026-06-11T14:00Z')
+    assert df.loc[t, ['shortwave_radiation', 'direct_normal_irradiance', 'diffuse_radiation']].isna().all()
+    assert df.loc[t, 'temperature_2m'] == 15.0
+    assert df.drop(t).equals(E.om_frame(_hourly(w)).drop(t))
+    assert 'dmi_seamless: 1 hour(s) with irradiance above the top of the atmosphere left out, first at 2026-06-11T14:00:00+00:00' \
+        in capsys.readouterr().out
+
+
+def test_clear_sky_is_never_dropped(cfg):
+    """No false alarms: a year of clear sky in Europe, and summer on a 5000 m tropical plateau, where pvlib's clear-sky
+    GHI already runs about 5 % above the top of the atmosphere."""
+    year = clear_sky_weather(cfg, '2026-01-01', 365 * 24)
+    assert E.om_frame(_hourly(year)).shortwave_radiation.notna().all()
+    cfg.latitude, cfg.longitude, cfg.altitude = -23.0, -67.75, 5000
+    high = clear_sky_weather(cfg, '2026-12-01', 60 * 24)
+    assert E.om_frame(_hourly(high)).shortwave_radiation.notna().all()
+
+
+def test_run_leaves_out_one_models_impossible_hour(eng, monkeypatch):
+    w = clear_sky_weather(eng.cfg, '2026-10-23', 5 * 24 + 1)
+    good, bad = _hourly(w), _hourly(w)
+    t = pd.Timestamp('2026-10-24T11:00Z')
+    bad['shortwave_radiation'][list(w.index).index(t)] = 5419.0
+    spiky = eng.cfg.models[0]
+    monkeypatch.setattr(E, 'om_get', lambda url, params, **k: FakeResp(200, {'hourly': bad if params['models'] == spiky else good}))
+    assert eng.run() == 0
+    c = eng.db()
+    p50, n = c.execute('select p50, members from out where target = ?', (int(t.timestamp()),)).fetchone()
+    raw = [r[0] for r in c.execute('select pv from nwp where target = ?', (int(t.timestamp()),))]
+    assert n == 2 and len(raw) == 2                         # that model's hour is not archived or averaged
+    assert p50 == pytest.approx(sum(raw) / 2)
