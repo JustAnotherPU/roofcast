@@ -341,7 +341,7 @@ class Engine:
         for f in os.listdir(self.cache):     # yesterday's cache is replaced
             if end not in f:
                 os.remove(os.path.join(self.cache, f))
-        prev = self.load_cal() if os.path.exists(self.cal_path) else {}
+        prev = self.load_cal() or {}
         cal = {'generated': self.now().isoformat(), 'n_hours': int(a.ok.sum()), 'models': {}}
         days = np.array(a.index.tz_convert(self.tz).date)
         # The outage filter in actuals() reads the live archive, which a fresh install does not have yet. Apply the same
@@ -401,8 +401,18 @@ class Engine:
         k, raw_k = level_factor(t.y, t.f, [(today.date() - d).days for d in t.index])
         cal['level'] = {'k': round(k, 4), 'raw': round(raw_k, 4), 'days': int(len(t)), 'half_life_days': LEVEL_HALF,
                         'source': 'archived day-ahead members (out of sample)'}
-        with open(self.cal_path, 'w') as fh:
-            json.dump(cal, fh)
+        # written next to it, then renamed over it: a run reading it meanwhile, or a crash halfway, never sees half a file
+        tmp = f'{self.cal_path}.{os.getpid()}.tmp'
+        try:
+            with open(tmp, 'w') as fh:
+                json.dump(cal, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.cal_path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
         log('calibration:', len(cal['models']), 'model x lead,', cal['quantiles'], 'k =', cal['level']['k'])
         c.executemany('insert or replace into actual(hour, total, soc, grid) values(?,?,?,?)',
                       [(int(t.timestamp()), _f(r.total), _f(r.soc), _f(r.grid)) for t, r in raw.iterrows()])
@@ -485,19 +495,35 @@ class Engine:
         return out
 
     # ------------------------------------------------------------ forecast run (every 15 min)
-    def load_cal(self) -> dict:
-        with open(self.cal_path) as fh:
-            return json.load(fh)
+    def load_cal(self) -> dict | None:
+        """calibration.json, or None when there is none or its content can't be used (cut short, edited by hand).
+        Other read errors (permissions, I/O) still raise: the file may be fine, so it is not relearned over."""
+        try:
+            with open(self.cal_path) as fh:
+                cal = json.load(fh)
+        except FileNotFoundError:
+            return None
+        except ValueError as e:
+            log('calibration.json unreadable, ignored:', e)
+            return None
+        usable = (isinstance(cal, dict) and isinstance(cal.get('models'), dict) and isinstance(cal.get('quantiles'), dict)
+                  and all(isinstance(cal['quantiles'].get(k), (int, float)) for k in ('p10', 'p25', 'p50', 'p90'))
+                  and isinstance(cal.get('level') or {}, dict))
+        if not usable:      # these are read by run() without a fallback
+            log('calibration.json lacks models, quantiles or level, ignored')
+            return None
+        return cal
 
     def run(self) -> int:
         cfg = self.cfg
-        if not os.path.exists(self.cal_path):
+        cal = self.load_cal()
+        if cal is None:      # missing or unusable: learn first, as on a fresh install
             try:
                 self.learn()
             except Exception as e:
                 log('first learn failed, publishing uncalibrated:', e)
-        cal = self.load_cal() if os.path.exists(self.cal_path) else {'models': {}, 'quantiles': quantiles_from_ratios(pd.Series(dtype=float)),
-                                                                     'generated': None, 'n_hours': 0}
+            cal = self.load_cal() or {'models': {}, 'quantiles': quantiles_from_ratios(pd.Series(dtype=float)),
+                                      'generated': None, 'n_hours': 0}
         now = self.now()
         issue = int(now.timestamp())
         d0, d1, d2, d3 = local_days(now, self.tz)

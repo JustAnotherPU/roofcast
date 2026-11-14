@@ -1,4 +1,5 @@
 """Failure handling that shows up outside Europe: models without data at the site, short model lists, bad NWP values."""
+import glob
 import json
 import os
 
@@ -14,6 +15,7 @@ from conftest import FakeHA, clear_sky_weather
 
 URL = 'https://api.open-meteo.com/v1/forecast'
 PARAMS = {'latitude': -33.87, 'longitude': 151.21, 'models': 'knmi_harmonie_arome_europe'}
+NOW = pd.Timestamp('2026-10-24T10:05Z')
 
 
 class FakeResp:
@@ -25,6 +27,16 @@ class FakeResp:
         if self.body is None:
             raise ValueError('no JSON')
         return self.body
+
+
+def _hourly(w):
+    """Open-Meteo's hourly JSON for a weather frame (it labels each hour by its END)."""
+    return {'time': [(t + pd.Timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M') for t in w.index], **{v: w[v].tolist() for v in E.VARS}}
+
+
+def _write(path, text):
+    with open(path, 'w') as fh:
+        fh.write(text)
 
 
 # ---------------------------------------------------------------- om_get
@@ -126,3 +138,81 @@ def test_horizon_with_no_model_writes_nothing(cfg, monkeypatch):
     monkeypatch.setattr(eng, 'fetch_prev_runs', down)
     assert horizon.main(eng, write=True) == 1
     assert not os.path.exists(eng.hz_path)
+
+
+# ---------------------------------------------------------------- calibration.json
+@pytest.fixture
+def eng(cfg, monkeypatch):
+    """Three models, clear-sky forecasts from a stubbed om_get, and the same weather as previous runs for learn."""
+    hourly = _hourly(clear_sky_weather(cfg, '2026-10-23', 5 * 24 + 1))
+    monkeypatch.setattr(E, 'om_get', lambda url, params, **k: FakeResp(200, {'hourly': hourly}))
+    cfg.models = cfg.models[:3]
+    cfg.history_days = 30
+    e = Engine(cfg, ha=FakeHA())
+    monkeypatch.setattr(e, 'now', lambda: NOW)
+    e.hist = clear_sky_weather(cfg, (NOW - pd.Timedelta(days=31)).floor('D'), 32 * 24)
+    monkeypatch.setattr(e, 'fetch_prev_runs', lambda m, lead, s, end: e.hist)
+    return e
+
+
+def _with_history(eng):
+    """Measured production = 90 % of the forecast, so learn() can fit."""
+    F = eng.pv(eng.hist)
+    eng._ha = FakeHA({x.entities[0]: F[x.name] * 900 for x in eng.cfg.arrays})
+
+
+def test_run_with_cut_short_calibration_learns_again(eng):
+    _with_history(eng)
+    _write(eng.cal_path, '{"generated": "2026-10-23T01:30:00+00:00", "models": {"icon_sea')
+    assert eng.run() == 0
+    with open(eng.cal_path) as fh:                           # rewritten by the learn the run started
+        assert len(json.load(fh)['models']) == 2 * len(eng.cfg.models)
+    assert eng.ha.states['sensor.pv_forecast_today'][1]['models_ok'] == 3
+
+
+@pytest.mark.parametrize('text', ['[]', '{"models": {}, "quantiles": {}}', '{"models": [], "quantiles": {"p10": 1, "p25": 1, "p50": 1, "p90": 1}}'])
+def test_run_with_unusable_calibration_and_failed_learn_publishes(eng, text):
+    _write(eng.cal_path, text)                               # learn fails here (FakeHA has no history)
+    assert eng.run() == 0
+    at = eng.ha.states['sensor.pv_forecast_today'][1]
+    assert at['quantiles_fallback'] is True and at['models_ok'] == 3
+
+
+def test_unreadable_calibration_file_still_raises(eng, monkeypatch):
+    """A permission or I/O error says nothing about the content: no relearn over a file that may be fine."""
+    _write(eng.cal_path, '{}')
+
+    def denied(path, *a, **k):
+        raise PermissionError(13, 'Permission denied', path)
+    monkeypatch.setattr(E, 'open', denied, raising=False)
+    with pytest.raises(PermissionError):
+        eng.run()
+    assert eng.ha.states == {}
+
+
+def test_learn_replaces_a_cut_short_calibration(eng):
+    _with_history(eng)
+    _write(eng.cal_path, '{"generated": "2026-10-23T01:30:00+00:00", "mo')
+    assert eng.learn() == 0
+    with open(eng.cal_path) as fh:
+        assert len(json.load(fh)['models']) == 2 * len(eng.cfg.models)
+    assert glob.glob(eng.cal_path + '*.tmp') == []
+
+
+def test_crash_while_writing_keeps_the_old_calibration(eng, monkeypatch):
+    _with_history(eng)
+    old = json.dumps({'generated': 'old', 'n_hours': 1, 'models': {}, 'quantiles': {'p10': 0.6, 'p25': 0.8, 'p50': 1.0, 'p90': 1.2}})
+    _write(eng.cal_path, old)
+    written = []
+
+    def cut(obj, fh, **k):
+        written.append(fh.name)
+        fh.write('{"generated": ')
+        raise OSError('No space left on device')
+    monkeypatch.setattr(E.json, 'dump', cut)
+    with pytest.raises(OSError, match='No space left on device'):
+        eng.learn()
+    assert written and written[0] != eng.cal_path            # the crash happened while writing, to another file
+    with open(eng.cal_path) as fh:
+        assert fh.read() == old
+    assert glob.glob(eng.cal_path + '*.tmp') == []
