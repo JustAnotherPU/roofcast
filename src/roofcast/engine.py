@@ -31,6 +31,8 @@ LEVEL_DAYS, LEVEL_HALF, LEVEL_MIN, LEVEL_BOUNDS = 28, 14.0, 10, (0.85, 1.10)
 # Used until enough clear days exist to learn the spread (cold start). P50 stays the ensemble mean.
 DEFAULT_QUANTILES = {'p10': 0.55, 'p25': 0.8, 'p50': 1.0, 'p90': 1.25}
 MIN_QUANTILE_DAYS = 5
+COVERAGE_DAYS, MIN_COVERAGE_DAYS = 60, 7
+BAND_EPS_KWH = 0.01                          # a band narrower than this (clipped at the AC limit) is not scored     # band coverage: window, and fewer scored days than this = no percentages
 NEW_ARRAY_BOUNDS = (0.1, 1.5)
 NWP_KEEP_DAYS = 35                           # > LEVEL_DAYS + 3 days of margin used by level_day_ahead
 CLIP_SHARE = 0.7                             # forecast hour >= this share of curtailment.clip_limit_kw may clip
@@ -419,6 +421,10 @@ class Engine:
         k, raw_k = level_factor(t.y, t.f, [(today.date() - d).days for d in t.index])
         cal['level'] = {'k': round(k, 4), 'raw': round(raw_k, 4), 'days': int(len(t)), 'half_life_days': LEVEL_HALF,
                         'source': 'archived day-ahead members (out of sample)'}
+        try:
+            cal['coverage'] = self.band_coverage(c, a)
+        except Exception as e:      # a diagnostic: never block the calibration
+            log('band coverage failed:', e)
         # written next to it, then renamed over it: a run reading it meanwhile, or a crash halfway, never sees half a file
         tmp = f'{self.cal_path}.{os.getpid()}.tmp'
         try:
@@ -468,6 +474,42 @@ class Engine:
             rows.append((d.date(), float(yh.sum()), float(n.groupby('provider').pv.sum().mean())))
         t = pd.DataFrame(rows, columns=['day', 'y', 'f']).set_index('day')
         return t[t.f > self.min_day_kwh].tail(days)
+
+    def band_coverage(self, c, a: pd.DataFrame, days: int = COVERAGE_DAYS) -> dict:
+        """How often the actual fell outside the published day-ahead band (table out, last issue before 21:00 the day
+        before, at most 6 h older), per daylight hour and per day, on the ok hours of the last `days` days. It reads
+        what was published, so it describes the band and changes nothing in it."""
+        days = min(days, self.cfg.history_days)
+        ok = a[a.ok & a.total.notna()]
+        loc = ok.index.tz_convert(self.tz)
+        today = self.now().tz_convert(self.tz).normalize()
+        since = int((today - pd.DateOffset(days=days + 2)).timestamp())
+        iss = pd.read_sql('select distinct issue from out where issue >= ?', c, params=(since,)).issue
+        hours, per_day = [], []
+        for d, yh in ok.total.groupby(loc.normalize()):
+            cut = (d - pd.Timedelta(hours=3)).timestamp()
+            I = iss[iss <= cut]
+            if d >= today or d < today - pd.DateOffset(days=days) or I.empty or cut - I.max() > 6 * 3600:
+                continue
+            o = pd.read_sql(f"select target, p10, p50, p90 from out where issue = ? and target in ({','.join('?' * len(yh))})",
+                            c, params=(int(I.max()), *[int(t.timestamp()) for t in yh.index]))
+            o['y'] = o.target.map({int(t.timestamp()): v for t, v in yh.items()})
+            o = o[o.p50 > self.dead_hour_kwh]                    # daylight hours only: at night everything is 0
+            day = o[['p10', 'p90', 'y']].sum()
+            if o.p50.sum() <= self.min_day_kwh or day.p90 - day.p10 <= BAND_EPS_KWH:
+                continue
+            hours.append(o[o.p90 - o.p10 > BAND_EPS_KWH])        # clipped hours: P10 = P90 = limit, nothing to score
+            per_day.append(day)
+        res = {'window_days': days, 'days': len(per_day), 'hours': int(sum(len(h) for h in hours))}
+        if len(per_day) < MIN_COVERAGE_DAYS:
+            return res
+        H, D = pd.concat(hours), pd.DataFrame(per_day)
+
+        def pct(m):
+            return round(float(m.mean() * 100), 1)
+        res.update({'hours_below_p10_pct': pct(H.y < H.p10), 'hours_above_p90_pct': pct(H.y > H.p90),
+                    'days_below_p10_pct': pct(D.y < D.p10), 'days_above_p90_pct': pct(D.y > D.p90)})
+        return res
 
     # ------------------------------------------------------------ quality tracking
     def quality(self, c) -> None:
@@ -626,7 +668,8 @@ class Engine:
         common = {'unit_of_measurement': 'kWh', 'device_class': 'energy', 'icon': 'mdi:solar-power-variant',
                   'generated_at': now.isoformat(), 'models_ok': sum(1 for v in status.values() if v == 'ok'), 'models': status,
                   'calibration': cal.get('generated'), 'calibration_hours': cal.get('n_hours', 0),
-                  'level_factor': cal.get('level') or {'k': 1.0}, 'quantiles_fallback': bool(q.get('fallback')), 'knmi': knmi}
+                  'level_factor': cal.get('level') or {'k': 1.0}, 'quantiles_fallback': bool(q.get('fallback')), 'knmi': knmi,
+                  'band_coverage': cal.get('coverage') or {}}
         self.ha.set_state(cfg.sensor_today, dsum(d0, 'p50'), {
             **common, 'friendly_name': 'PV forecast today (P50)', 'p10': dsum(d0, 'p10'), 'p25': dsum(d0, 'p25'),
             'p90': dsum(d0, 'p90'), 'detailedForecast': detailed, **({'per_array': per} if per else {}), **qs})

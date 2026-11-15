@@ -133,8 +133,11 @@ The HA token is read from the `HA_TOKEN` environment variable, never from the fi
 
 Two sensors are published (names configurable):
 
-- `sensor.pv_forecast_today`: state = P50 kWh today. Attributes: `p10`, `p25`, `p90`, `detailedForecast` (30-min slots for today and the next two days, Solcast keys `period_start`, `pv_estimate`, `pv_estimate10`, `pv_estimate90`, plus `pv_estimate25`, values in kW), `per_array` (hourly P50 per array, adds up to the total), `models_ok`, `models`, `generated_at`, `level_factor`, `knmi`, and accuracy stats such as `ensemble_wmape_30d`.
+- `sensor.pv_forecast_today`: state = P50 kWh today. Attributes: `p10`, `p25`, `p90`, `detailedForecast` (30-min slots for today and the next two days, Solcast keys `period_start`, `pv_estimate`, `pv_estimate10`, `pv_estimate90`, plus `pv_estimate25`, values in kW), `per_array` (hourly P50 per array, adds up to the total), `models_ok`, `models`, `generated_at`, `level_factor`, `knmi`, `band_coverage`, and accuracy stats such as `ensemble_wmape_30d`.
+
 - `sensor.pv_forecast_tomorrow`: state = P50 kWh tomorrow. Attributes: `p10`, `p25`, `p90`, `day_after_tomorrow_p50`, and the common ones (`models_ok`, `models`, `generated_at`, `level_factor`, `knmi` and so on). It has no `detailedForecast`, `per_array` or accuracy stats. Those are only on the today sensor, which covers today plus the next two days.
+
+`band_coverage` says how often the actual fell outside the published day-ahead band over the last 60 days (or `history_days` if shorter): `hours_below_p10_pct`, `hours_above_p90_pct`, `days_below_p10_pct` and `days_above_p90_pct`, with the number of scored `days` and `hours`. It is on both sensors, updated by `learn`, and gives only the counts until 7 days are scored. Hours where the band is clipped flat at the AC limit are not scored. P10 and P90 come from the 5 % and 95 % levels of the daily ratios, so about 5 % of days on each side is the expected result. They are applied to every hour, so expect more hours than days outside the band.
 
 These are state objects written through the REST API. They are not tied to an integration, so they disappear after an HA restart until the next run (at most 15 minutes).
 
