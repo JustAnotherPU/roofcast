@@ -33,6 +33,7 @@ DEFAULT_QUANTILES = {'p10': 0.55, 'p25': 0.8, 'p50': 1.0, 'p90': 1.25}
 MIN_QUANTILE_DAYS = 5
 NEW_ARRAY_BOUNDS = (0.1, 1.5)
 NWP_KEEP_DAYS = 35                           # > LEVEL_DAYS + 3 days of margin used by level_day_ahead
+CLIP_SHARE = 0.7                             # forecast hour >= this share of curtailment.clip_limit_kw may clip
 
 
 def log(*a):
@@ -368,6 +369,14 @@ class Engine:
             a.loc[dead, ['ok', 'okb']] = False
             if dead.any():
                 log('learn:', int(dead.sum()), 'hours at ~0 while the forecast expected production, left out')
+        if ref and cfg.clip_limit_kw:
+            # Hours that may clip do not show what the roof could do. Chosen on the forecast, not on the measured value:
+            # dropping hours measured at the limit keeps those where the forecast was too high and pulls g low.
+            # Opt-in: on a hybrid that charges the battery above the AC rating, hours at the AC limit are real production.
+            near = pd.concat(ref, axis=1).mean(axis=1) * cfg.start_efficiency >= CLIP_SHARE * cfg.clip_limit_kw
+            a.loc[near, ['ok', 'okb']] = False
+            if near.any():
+                log('learn:', int(near.sum()), 'hours forecast near the clipping limit, left out')
         ens = {}
         for m in cfg.models:
             for lead in (0, 1):
@@ -382,7 +391,7 @@ class Engine:
                 cal['models'][f'{m}|{lead}'] = ent
                 if lead == 1:
                     kb = binkey(F)
-                    ens[m] = sum(self.apply_cal(F, kb, ent, x) for x in cfg.arrays).clip(upper=cfg.ac_limit_kw)
+                    ens[m] = sum(self.apply_cal(F, kb, ent, x) for x in cfg.arrays)
         if not ens:
             # nothing fitted tonight (API down, wrong unit, no history): never write an empty or stale-only
             # calibration, and fail so systemd retries
@@ -390,7 +399,7 @@ class Engine:
             return 1
         # quantiles: daily actual / day-ahead ensemble ratio
         if ens:
-            E = pd.DataFrame(ens).mean(axis=1)
+            E = pd.DataFrame(ens).mean(axis=1).clip(upper=cfg.ac_limit_kw)     # clipped after the mean, like run()'s P50
             ok = a.ok.reindex(E.index).fillna(False).astype(bool)
             dd = pd.DataFrame({'f': E[ok].groupby(days[ok.values]).sum(), 'y': a.total[ok].groupby(days[ok.values]).sum()})
             dd = dd[dd.f > self.min_day_kwh]
@@ -566,7 +575,7 @@ class Engine:
                         p[sel] = self.apply_cal(F, kb, ent, x)[sel]
                     per_array[x.name][m] = p
                     tot = tot + p
-                members[m] = tot.clip(upper=cfg.ac_limit_kw)
+                members[m] = tot          # clipped only after k: clip(mean x k), not clip(mean(clip)) x k
                 status[m] = 'ok'
                 # archived RAW: before k and before the AC clip, so level k can be measured without feedback
                 c.executemany('insert or replace into nwp values(?,?,?,?,?,?,?,?,?,?,?)',
@@ -584,10 +593,9 @@ class Engine:
         if not LEVEL_BOUNDS[0] <= K <= LEVEL_BOUNDS[1]:
             K = 1.0                                                   # corrupt calibration file: no correction
         M = pd.DataFrame(members)
-        p50m = (M.mean(axis=1, skipna=True) * K).clip(upper=cfg.ac_limit_kw)
         n = M.notna().sum(axis=1)
         q = cal['quantiles']
-        base = p50m / max(q['p50'], 0.5)
+        base = M.mean(axis=1, skipna=True) * K / max(q['p50'], 0.5)      # bands from the unclipped expectation
         Q = pd.DataFrame({k: (base * q[k]).clip(upper=cfg.ac_limit_kw) for k in ('p10', 'p25', 'p50', 'p90')})
         fut = Q[Q.index >= now.floor('h') - pd.Timedelta(hours=1)]
         c.executemany('insert or replace into out values(?,?,?,?,?,?,?)',
