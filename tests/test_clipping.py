@@ -54,7 +54,7 @@ def test_clip_limit_leaves_clipped_hours_out(eng, monkeypatch):
     assert s == pytest.approx(0.9, abs=0.005) and w == pytest.approx(0.9, abs=0.005)
 
 
-def test_forecast_error_does_not_bias_the_level(eng, monkeypatch):
+def test_measured_noise_does_not_bias_the_level(eng, monkeypatch):
     """With hourly forecast error, dropping hours on the measured value keeps the hours where the forecast was too
     high near the limit and pulls g low. Censoring on the forecast does not."""
     _history(eng, monkeypatch, noise=0.15)
@@ -106,3 +106,17 @@ def test_clip_limit_config():
     assert parse(mk()).clip_limit_kw is None
     with pytest.raises(ConfigError, match='clip_limit_kw'):
         parse(mk(curtailment={'clip_limit_kw': 0}))
+
+
+def test_a_model_with_no_data_does_not_hide_clipping(eng, monkeypatch):
+    """A model that returns nothing (outside its area) must not pull the forecast used to find clipped hours to 0."""
+    _history(eng, monkeypatch)
+    eng.cfg.clip_limit_kw = LIMIT
+    assert len(eng.cfg.models) >= 2
+    w = eng.fetch_prev_runs(None, 1, None, None)
+    empty = w.copy()
+    empty[:] = float('nan')
+    monkeypatch.setattr(eng, 'fetch_prev_runs', lambda m, lead, s, e: empty if m == eng.cfg.models[-1] else w)
+    assert eng.learn() == 0
+    s, w_ = _g(eng)
+    assert s == pytest.approx(0.9, abs=0.005) and w_ == pytest.approx(0.9, abs=0.005)
