@@ -157,6 +157,7 @@ class Engine:
     # ------------------------------------------------------------ storage
     def db(self) -> sqlite3.Connection:
         c = sqlite3.connect(self.db_path, timeout=60)
+        c.execute('pragma journal_mode=wal')      # reads no longer wait for a writer; two writers still take turns
         c.executescript('''
         create table if not exists nwp(issue integer, provider text, target integer, lead_h real, ghi real, dni real, dhi real,
                                        t2m real, cc real, wind real, pv real, primary key(issue, provider, target));
@@ -438,6 +439,7 @@ class Engine:
         today = self.now().tz_convert(self.tz).date().isoformat()
         srcs = [('ensemble', 'select issue, target, p50 kw from out')]
         srcs += [(p, f"select issue, target, kw from ext where provider = '{p}'") for p in ('solcast', 'open_meteo')]
+        rows = []
         for prov, sql in srcs:
             f = pd.read_sql(sql, c)
             f = f[~(f.target // 3600 * 3600).isin(inv)]
@@ -456,7 +458,8 @@ class Engine:
                 ts = sorted(g.target.unique())
                 # real step of each source (Open-Meteo integration 15 min, Solcast 30 min, this engine 1 h)
                 step = float(pd.Series(ts).diff().median()) / 3600 if len(ts) > 2 else 1.0
-                c.execute('insert or replace into quality values(?,?,?,?,?)', (day, prov, 'day_ahead', float(g.kw.sum() * step), float(real[day])))
+                rows.append((day, prov, 'day_ahead', float(g.kw.sum() * step), float(real[day])))
+        c.executemany('insert or replace into quality values(?,?,?,?,?)', rows)    # one short write transaction
         c.commit()
 
     @staticmethod
@@ -541,7 +544,12 @@ class Engine:
         fut = Q[Q.index >= now.floor('h') - pd.Timedelta(hours=1)]
         c.executemany('insert or replace into out values(?,?,?,?,?,?,?)',
                       [(issue, int(t.timestamp()), r.p10, r.p25, r.p50, r.p90, int(n[t])) for t, r in fut.iterrows()])
-        self.snapshot_others(c, issue)
+        c.commit()          # the archive is safe before anything is read from HA
+        try:
+            self.snapshot_others(c, issue)
+        except Exception as e:      # compare entities unreadable: keep the archive, drop a half-written snapshot
+            c.rollback()
+            log('snapshot of the compare entities failed:', e)
         c.commit()
         knmi = {'enabled': cfg.knmi_enabled, 'hours_corrected': 0}
         if cfg.knmi_enabled:      # applied to the PUBLISHED curve only; table out stays raw, so no feedback loop
@@ -578,10 +586,11 @@ class Engine:
         try:
             ms = pd.DataFrame({s: pd.DataFrame(v).mean(axis=1) for s, v in per_array.items() if v})
             sh = ms.div(ms.sum(axis=1), axis=0).fillna(0)
-            hh = pd.date_range(d0.tz_convert('UTC'), d2.tz_convert('UTC'), freq='h', inclusive='left')
+            # local midnight is not on a whole UTC hour in half-hour zones: start at the first whole UTC hour after it
+            hh = pd.date_range(d0.tz_convert('UTC').ceil('h'), d2.tz_convert('UTC'), freq='h', inclusive='left')
             p50 = Q.p50.reindex(hh).fillna(0)
             shh = sh.reindex(hh).fillna(0)
-            return {'start': d0.isoformat(), 'step_min': 60, **{s: [round(float(v), 3) for v in p50 * shh[s]] for s in sh}}
+            return {'start': hh[0].tz_convert(self.tz).isoformat(), 'step_min': 60, **{s: [round(float(v), 3) for v in p50 * shh[s]] for s in sh}}
         except Exception as e:     # never block publishing the total
             log('per_array split failed:', e)
             return None
