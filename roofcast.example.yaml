@@ -7,7 +7,7 @@ location:
   timezone: Europe/Amsterdam
 
 # One entry per independently measured array (usually one MPPT input).
-# azimuth: 180 = south, 90 = east, 270 = west. tilt: 0 = flat.
+# azimuth: 180 = south, 90 = east, 270 = west, 0 = north (the sunny side south of the equator). tilt: 0 = flat.
 # kwp is the nameplate; the real level is learned from your data.
 arrays:
   - name: south
@@ -64,6 +64,17 @@ models:                     # Open-Meteo model names; drop the ones that do not 
   - ukmo_seamless
   - dmi_seamless
   - gfs_seamless
+# Australia and New Zealand: Open-Meteo has no regional model there, so use the global ones (checked in November 2026,
+# see "Outside Europe" in the README). Replace the list above with this one:
+# models:
+#   - ecmwf_ifs025              # or ecmwf_ifs, not both
+#   - ecmwf_aifs025_single
+#   - gfs_seamless
+#   - icon_seamless
+#   - ukmo_seamless             # radiation only about 2 days ahead
+#   - meteofrance_seamless
+#   - gem_seamless
+#   - cma_grapes_global
 
 new_array:
   start_efficiency: 0.85    # used before any calibration exists, and for a new array with < min_hours of data
