@@ -31,8 +31,8 @@ LEVEL_DAYS, LEVEL_HALF, LEVEL_MIN, LEVEL_BOUNDS = 28, 14.0, 10, (0.85, 1.10)
 # Used until enough clear days exist to learn the spread (cold start). P50 stays the ensemble mean.
 DEFAULT_QUANTILES = {'p10': 0.55, 'p25': 0.8, 'p50': 1.0, 'p90': 1.25}
 MIN_QUANTILE_DAYS = 5
-COVERAGE_DAYS, MIN_COVERAGE_DAYS = 60, 7
-BAND_EPS_KWH = 0.01                          # a band narrower than this (clipped at the AC limit) is not scored     # band coverage: window, and fewer scored days than this = no percentages
+COVERAGE_DAYS, MIN_COVERAGE_DAYS = 60, 7     # band coverage: window, and fewer scored days than this = no percentages
+BAND_EPS_KWH = 0.01                          # a band narrower than this (clipped at the AC limit) is not scored
 NEW_ARRAY_BOUNDS = (0.1, 1.5)
 NWP_KEEP_DAYS = 35                           # > LEVEL_DAYS + 3 days of margin used by level_day_ahead
 CLIP_SHARE = 0.7                             # forecast hour >= this share of curtailment.clip_limit_kw may clip
@@ -354,7 +354,7 @@ class Engine:
             if end not in f:
                 os.remove(os.path.join(self.cache, f))
         prev = self.load_cal() or {}
-        cal = {'generated': self.now().isoformat(), 'n_hours': int(a.ok.sum()), 'models': {}}
+        cal = {'generated': self.now().isoformat(), 'models': {}}
         days = np.array(a.index.tz_convert(self.tz).date)
         # The outage filter in actuals() reads the live archive, which a fresh install does not have yet. Apply the same
         # rule with the day-ahead previous runs, or hours at ~0 before the panels were installed (or with the inverter
@@ -363,22 +363,28 @@ class Engine:
         for m in cfg.models:
             try:
                 F = self.pv(self.fetch_prev_runs(m, 1, start, end).reindex(a.index).interpolate(limit=2))
-                ref.append(sum(F[x.name] for x in cfg.arrays))
+                ref.append(sum(F[x.name] for x in cfg.arrays).where(F.has_nwp))   # a model with no data is not a 0 forecast
             except Exception:
                 pass                                                     # the model loop below logs the failure
+        ref = [r for r in ref if r.notna().any()]                        # empty frames count as no forecast
         if ref:
             dead = (a.total < 0.02) & (pd.concat(ref, axis=1).mean(axis=1) > self.dead_hour_kwh)
             a.loc[dead, ['ok', 'okb']] = False
             if dead.any():
                 log('learn:', int(dead.sum()), 'hours at ~0 while the forecast expected production, left out')
         if ref and cfg.clip_limit_kw:
-            # Hours that may clip do not show what the roof could do. Chosen on the forecast, not on the measured value:
-            # dropping hours measured at the limit keeps those where the forecast was too high and pulls g low.
+            # Hours that may clip do not show what the roof could do. Chosen on the forecast (raw pvlib x start_efficiency):
+            # g is fitted as actual given forecast, so selecting on the forecast leaves it unbiased as long as the forecast
+            # is roughly calibrated, while selecting on the measured value pulls it low (on a roof that never clips:
+            # 0.89 vs 0.90 dropping the top 20 % on the forecast, 0.79 dropping them on the measured value).
             # Opt-in: on a hybrid that charges the battery above the AC rating, hours at the AC limit are real production.
             near = pd.concat(ref, axis=1).mean(axis=1) * cfg.start_efficiency >= CLIP_SHARE * cfg.clip_limit_kw
             a.loc[near, ['ok', 'okb']] = False
             if near.any():
                 log('learn:', int(near.sum()), 'hours forecast near the clipping limit, left out')
+        elif cfg.clip_limit_kw:
+            log('learn: no day-ahead forecast for the clipping filter, clipped hours stay in learning tonight')
+        cal['n_hours'] = int(a.ok.sum())
         ens = {}
         for m in cfg.models:
             for lead in (0, 1):
