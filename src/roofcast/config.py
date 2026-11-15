@@ -59,6 +59,7 @@ class Config:
     grid_entity: str | None = None
     soc_full_pct: float = 97.0
     export_threshold_w: float = -300.0
+    clip_limit_kw: float | None = None
     solcast_entities: list[str] = field(default_factory=list)
     open_meteo_entities: list[str] = field(default_factory=list)
     start_efficiency: float = 0.85
@@ -184,6 +185,7 @@ def parse(raw: dict) -> Config:
         grid_entity=cur.get('grid_power_entity'),
         soc_full_pct=_num(cur, 'soc_full_pct', 'curtailment', 0, 100, default=97),
         export_threshold_w=_num(cur, 'export_threshold_w', 'curtailment', default=-300),
+        clip_limit_kw=_num(cur, 'clip_limit_kw', 'curtailment', 0.1) if cur.get('clip_limit_kw') is not None else None,
         solcast_entities=list(cmp_.get('solcast_entities') or []),
         open_meteo_entities=list(cmp_.get('open_meteo_entities') or []),
         start_efficiency=_num(new, 'start_efficiency', 'new_array', 0.1, 1.5, default=0.85),

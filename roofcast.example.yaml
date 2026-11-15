@@ -46,6 +46,9 @@ publish:
 #   grid_power_entity: sensor.grid_power     # positive = import, negative = export, in W
 #   soc_full_pct: 97
 #   export_threshold_w: -300
+#   clip_limit_kw: 8.0                     # opt-in: hours forecast at >= 70 % of this may clip and are left out of learning.
+#                                          # On a hybrid that charges the battery above its AC rating, leave it unset
+#                                          # or use the PV-side limit.
 
 # Optional: archive other forecasts already in HA and score them the same way (attributes *_wmape_7d/30d).
 # compare:
